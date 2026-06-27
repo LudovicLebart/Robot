@@ -11,6 +11,7 @@ import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -35,6 +36,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var renderer: SlamRenderer
     private lateinit var logTextView: TextView
     private lateinit var logScrollView: ScrollView
+    private lateinit var btnLog: Button
+    private lateinit var btnPlan: Button
     private var logVisible = false
 
     private val cameraPermissionLauncher = registerForActivityResult(
@@ -54,13 +57,13 @@ class MainActivity : ComponentActivity() {
 
         renderer = SlamRenderer(
             sessionManager = viewModel.sessionManager,
-            tsdfVolume = viewModel.tsdfVolume,
+            tsdfVolume     = viewModel.tsdfVolume,
             getDisplayRotation = { display?.rotation ?: Surface.ROTATION_0 },
-            onLog = { msg -> OverlayLogger.log(msg) },
+            onLog          = { msg -> OverlayLogger.log(msg) },
         )
         glView.setRenderer(renderer)
 
-        // Log overlay views
+        // ── Log overlay ─────────────────────────────────────────────────────
         logTextView = TextView(this).apply {
             typeface = Typeface.MONOSPACE
             textSize = 11f
@@ -73,46 +76,61 @@ class MainActivity : ComponentActivity() {
             visibility = android.view.View.GONE
         }
 
-        val toggleBtn = Button(this).apply {
-            text = "LOG"
-            textSize = 11f
-            setBackgroundColor(Color.argb(180, 0, 0, 80))
-            setTextColor(Color.WHITE)
-            setOnClickListener {
-                logVisible = !logVisible
-                logScrollView.visibility =
-                    if (logVisible) android.view.View.VISIBLE else android.view.View.GONE
-            }
+        // ── Buttons ──────────────────────────────────────────────────────────
+        btnLog = makeButton("LOG") {
+            logVisible = !logVisible
+            logScrollView.visibility =
+                if (logVisible) android.view.View.VISIBLE else android.view.View.GONE
         }
 
+        btnPlan = makeButton("PLAN") {
+            val next = !renderer.planViewEnabled
+            renderer.planViewEnabled = next
+            // Update button appearance to reflect state
+            glView.queueEvent {
+                // runs on GL thread — nothing to do, just use the volatile flag
+            }
+            runOnUiThread {
+                btnPlan.setBackgroundColor(
+                    if (next) Color.argb(220, 0, 100, 0)
+                    else Color.argb(180, 0, 0, 80)
+                )
+            }
+            OverlayLogger.log(if (next) "Plan view ON" else "Plan view OFF (AR mode)")
+        }
+
+        val buttonRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(btnLog,  LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
+            addView(btnPlan, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+        }
+
+        // ── Root layout ──────────────────────────────────────────────────────
         val root = FrameLayout(this).apply {
             addView(glView, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+            addView(logScrollView, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
             addView(
-                logScrollView,
-                FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
-            )
-            addView(
-                toggleBtn,
+                buttonRow,
                 FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.TOP or Gravity.END).apply {
-                    topMargin = 16
-                    marginEnd = 16
-                }
+                    topMargin  = 16
+                    marginEnd  = 16
+                },
             )
         }
         setContentView(root)
 
-        // Collect log text and update overlay
+        // Collect log text → overlay
         OverlayLogger.text.onEach { text ->
             logTextView.text = text
             if (logVisible) logScrollView.post { logScrollView.fullScroll(ScrollView.FOCUS_DOWN) }
         }.launchIn(lifecycleScope)
 
-        // Collect new mesh snapshots from TSDF and forward to GL renderer
+        // Forward mesh snapshots to GL renderer
         viewModel.tsdfVolume.mesh.onEach { snap ->
             renderer.onMeshSnapshot(snap)
         }.launchIn(lifecycleScope)
 
-        // Observe session state
+        // Session state
         viewModel.sessionState.onEach { state ->
             if (state is SessionState.Failed) {
                 OverlayLogger.log("SessionState.Failed: ${state.reason}")
@@ -120,14 +138,14 @@ class MainActivity : ComponentActivity() {
             }
         }.launchIn(lifecycleScope)
 
-        // Observe safety state
+        // Safety alerts
         viewModel.safetyState.onEach { safety ->
             when (safety) {
                 is SafetyState.VoidDetectedDown ->
                     Toast.makeText(this, "VOID BELOW: ${safety.distanceMm}mm", Toast.LENGTH_SHORT).show()
                 is SafetyState.ObstacleUp ->
                     Toast.makeText(this, "OBSTACLE ABOVE: ${safety.distanceMm}mm", Toast.LENGTH_SHORT).show()
-                SafetyState.Ok -> { /* no alert */ }
+                SafetyState.Ok -> {}
             }
         }.launchIn(lifecycleScope)
     }
@@ -152,5 +170,14 @@ class MainActivity : ComponentActivity() {
 
     private fun startArSession() {
         viewModel.sessionManager.resume()
+    }
+
+    private fun makeButton(label: String, onClick: () -> Unit) = Button(this).apply {
+        text         = label
+        textSize     = 11f
+        setBackgroundColor(Color.argb(180, 0, 0, 80))
+        setTextColor(Color.WHITE)
+        setPadding(16, 8, 16, 8)
+        setOnClickListener { onClick() }
     }
 }

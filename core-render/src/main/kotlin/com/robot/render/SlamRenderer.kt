@@ -1,5 +1,6 @@
 package com.robot.render
 
+import android.opengl.GLES30
 import android.opengl.GLSurfaceView
 import com.google.ar.core.TrackingState
 import com.robot.common.MeshSnapshot
@@ -13,11 +14,9 @@ import javax.microedition.khronos.opengles.GL10
 /**
  * Central GL thread.
  * - Calls session.update() once per frame.
- * - Renders the camera background + TSDF mesh.
+ * - AR mode: renders camera background + TSDF mesh.
+ * - Plan mode: renders TSDF mesh from above with orthographic projection.
  * - Publishes FrameData to the TSDF channel (CONFLATED — never blocks).
- *
- * @param getDisplayRotation  Returns the current display rotation (Surface.ROTATION_*).
- *   Must be supplied by the Activity/View — ARCore needs it to orient the camera texture.
  */
 class SlamRenderer(
     private val sessionManager: ArSessionManager,
@@ -34,6 +33,9 @@ class SlamRenderer(
     private var projMatrix = FloatArray(16)
 
     @Volatile private var pendingMesh: MeshSnapshot? = null
+    @Volatile var planViewEnabled = false
+
+    private var lastKnownPos = floatArrayOf(0f, 0f, 0f)
 
     private var depthSuccessCount = 0
     private var depthFailCount = 0
@@ -41,7 +43,7 @@ class SlamRenderer(
 
     fun onMeshSnapshot(snap: MeshSnapshot) {
         pendingMesh = snap
-        onLog("mesh received: ${snap.vertexCount} vertices")
+        onLog("mesh ready: ${snap.vertexCount} verts (pending GL upload)")
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -52,16 +54,14 @@ class SlamRenderer(
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
-        android.opengl.GLES30.glViewport(0, 0, width, height)
+        GLES30.glViewport(0, 0, width, height)
         val rotation = getDisplayRotation()
         sessionManager.setDisplayGeometry(rotation, width, height)
         onLog("GL surface ${width}x${height} rot=$rotation")
     }
 
     override fun onDrawFrame(gl: GL10?) {
-        android.opengl.GLES30.glClear(
-            android.opengl.GLES30.GL_COLOR_BUFFER_BIT or android.opengl.GLES30.GL_DEPTH_BUFFER_BIT
-        )
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
 
         val frame = sessionManager.update() ?: return
 
@@ -69,6 +69,22 @@ class SlamRenderer(
             onLog("display geometry changed")
         }
 
+        // Upload any pending mesh regardless of view mode
+        pendingMesh?.let { snap ->
+            meshRenderer.uploadMesh(snap)
+            pendingMesh = null
+            onLog("GL: mesh uploaded ${snap.vertexCount} verts")
+        }
+
+        if (planViewEnabled) {
+            // Dark background — no camera pass-through
+            GLES30.glClearColor(0.05f, 0.05f, 0.08f, 1f)
+            GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
+            meshRenderer.drawPlanView(lastKnownPos)
+            return
+        }
+
+        // ── AR mode ─────────────────────────────────────────────────────────
         backgroundRenderer.draw(frame)
 
         val camera = frame.camera
@@ -84,6 +100,10 @@ class SlamRenderer(
 
         val c2w = PoseExtractor.cameraToWorld(frame)
         if (c2w != null) {
+            lastKnownPos[0] = c2w[12]
+            lastKnownPos[1] = c2w[13]
+            lastKnownPos[2] = c2w[14]
+
             val frameData = DepthFrameProvider.extract(frame, c2w) { err ->
                 depthFailCount++
                 if (depthFailCount == 1 || depthFailCount % 90 == 0) {
@@ -93,21 +113,15 @@ class SlamRenderer(
             if (frameData != null) {
                 depthSuccessCount++
                 val sent = tsdfVolume.frameChannel.trySend(frameData).isSuccess
-                when (depthSuccessCount) {
-                    1 -> onLog("depth FIRST ${frameData.depthWidth}x${frameData.depthHeight} fx=${frameData.fx.toInt()} sent=$sent")
-                }
-                if (depthSuccessCount % 90 == 0) {
+                if (depthSuccessCount == 1) {
+                    onLog("depth FIRST ${frameData.depthWidth}x${frameData.depthHeight} fx=${frameData.fx.toInt()} sent=$sent")
+                } else if (depthSuccessCount % 90 == 0) {
                     val midIdx = frameData.depthWidth * frameData.depthHeight / 2
                     val centerMm = frameData.depthValues[midIdx].toInt() and 0xFFFF
                     onLog("depth #$depthSuccessCount center=${centerMm}mm fails=$depthFailCount tsdf=$sent")
                 }
                 onPoseUpdated(c2w)
             }
-        }
-
-        pendingMesh?.let { snap ->
-            meshRenderer.uploadMesh(snap)
-            pendingMesh = null
         }
 
         meshRenderer.draw(viewMatrix, projMatrix)

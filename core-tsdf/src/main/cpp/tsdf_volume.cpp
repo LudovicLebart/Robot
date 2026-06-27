@@ -45,9 +45,11 @@ void TsdfVolume::integrate(const uint16_t* depthMm, int w, int h,
 
                 if (camZ <= 0.0f) continue;
 
-                // Project to depth image
-                float u = fx * camX / camZ + cx;
-                float v = fy * camY / camZ + cy;
+                // Project to depth image.
+                // ARCore camera: Y+ is up. Depth image: row 0 at top, V increases downward.
+                // → negate camY so that camera-up maps to smaller row numbers (top of image).
+                float u = fx *  camX / camZ + cx;
+                float v = fy * (-camY) / camZ + cy;
 
                 int iu = static_cast<int>(u + 0.5f);
                 int iv = static_cast<int>(v + 0.5f);
