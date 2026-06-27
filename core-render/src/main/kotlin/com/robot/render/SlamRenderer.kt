@@ -24,6 +24,7 @@ class SlamRenderer(
     private val tsdfVolume: TsdfVolume,
     private val getDisplayRotation: () -> Int,
     private val onPoseUpdated: (FloatArray) -> Unit = {},
+    private val onLog: (String) -> Unit = {},
 ) : GLSurfaceView.Renderer {
 
     private val backgroundRenderer = BackgroundRenderer()
@@ -42,13 +43,17 @@ class SlamRenderer(
         val textureId = backgroundRenderer.init()
         meshRenderer.init()
         sessionManager.setCameraTextureName(textureId)
+        onLog("onSurfaceCreated: textureId=$textureId")
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         android.opengl.GLES30.glViewport(0, 0, width, height)
-        // Required by ARCore to correctly orient the camera feed texture
-        sessionManager.setDisplayGeometry(getDisplayRotation(), width, height)
+        val rotation = getDisplayRotation()
+        sessionManager.setDisplayGeometry(rotation, width, height)
+        onLog("onSurfaceChanged: ${width}x${height} rotation=$rotation")
     }
+
+    private var lastTrackingState: TrackingState? = null
 
     override fun onDrawFrame(gl: GL10?) {
         android.opengl.GLES30.glClear(
@@ -57,10 +62,19 @@ class SlamRenderer(
 
         val frame = sessionManager.update() ?: return
 
+        if (frame.hasDisplayGeometryChanged()) {
+            onLog("displayGeometryChanged")
+        }
+
         backgroundRenderer.draw(frame)
 
         val camera = frame.camera
-        if (camera.trackingState != TrackingState.TRACKING) return
+        val trackingState = camera.trackingState
+        if (trackingState != lastTrackingState) {
+            onLog("trackingState: $trackingState")
+            lastTrackingState = trackingState
+        }
+        if (trackingState != TrackingState.TRACKING) return
 
         viewMatrix = PoseExtractor.viewMatrix(frame)
         projMatrix = PoseExtractor.projectionMatrix(frame)
@@ -71,6 +85,8 @@ class SlamRenderer(
             if (frameData != null) {
                 tsdfVolume.frameChannel.trySend(frameData)
                 onPoseUpdated(c2w)
+            } else {
+                onLog("depth: no data this frame")
             }
         }
 

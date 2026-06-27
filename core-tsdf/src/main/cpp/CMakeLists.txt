@@ -14,5 +14,10 @@ add_library(
 
 target_include_directories(robot_tsdf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Android 15 (Pixel 9): native .so files must be aligned to 16 KB page boundaries
+target_link_options(robot_tsdf PRIVATE "-Wl,-z,max-page-size=16384")
+
+target_compile_options(robot_tsdf PRIVATE -O3 -ffast-math)
+
 find_library(log-lib log)
 target_link_libraries(robot_tsdf ${log-lib})

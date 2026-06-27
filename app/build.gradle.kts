@@ -38,6 +38,13 @@ android {
         compose = true
     }
 
+    packaging {
+        // Required for 16 KB page-size compatibility (Android 15 / Pixel 9)
+        jniLibs {
+            useLegacyPackaging = false
+        }
+    }
+
 }
 
 dependencies {
