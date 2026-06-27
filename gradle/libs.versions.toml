@@ -10,7 +10,7 @@ composeBom = "2025.04.01"
 arcore = "1.46.0"
 okhttp = "4.12.0"
 kotlinxSerialization = "1.7.3"
-hilt = "2.52"
+hilt = "2.57.2"
 junit = "4.13.2"
 androidxTest = "1.6.1"
 
