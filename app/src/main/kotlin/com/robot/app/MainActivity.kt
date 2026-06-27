@@ -3,11 +3,11 @@ package com.robot.app
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.widget.FrameLayout
+import android.view.Surface
 import android.widget.Toast
+import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.activity.ComponentActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.robot.common.SafetyState
@@ -44,6 +44,7 @@ class MainActivity : ComponentActivity() {
         renderer = SlamRenderer(
             sessionManager = viewModel.sessionManager,
             tsdfVolume = viewModel.tsdfVolume,
+            getDisplayRotation = { display?.rotation ?: Surface.ROTATION_0 },
         )
         glView.setRenderer(renderer)
 

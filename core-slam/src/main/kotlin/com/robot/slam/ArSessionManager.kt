@@ -58,6 +58,10 @@ class ArSessionManager(private val context: Context) {
         session?.setCameraTextureName(textureId)
     }
 
+    fun setDisplayGeometry(rotation: Int, width: Int, height: Int) {
+        session?.setDisplayGeometry(rotation, width, height)
+    }
+
     /** Returns null if session is not ready or if an error occurs during update. */
     fun update(): Frame? = try {
         session?.update()
