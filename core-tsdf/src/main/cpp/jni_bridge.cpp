@@ -23,11 +23,29 @@ Java_com_robot_tsdf_TsdfVolume_nativeIntegrate(
     jfloat fx, jfloat fy, jfloat cx, jfloat cy,
     jfloatArray c2wArr)
 {
+    if (!handle || w <= 0 || h <= 0) return;
     auto* vol = reinterpret_cast<TsdfVolume*>(handle);
-    jshort* depth = env->GetShortArrayElements(depthArr, nullptr);
-    jfloat* c2w   = env->GetFloatArrayElements(c2wArr, nullptr);
 
-    vol->integrate(reinterpret_cast<const int16_t*>(depth), w, h,
+    if (env->GetArrayLength(depthArr) < w * h) {
+        __android_log_print(ANDROID_LOG_ERROR, TAG,
+            "depth array too small: %d < %d", env->GetArrayLength(depthArr), w * h);
+        return;
+    }
+    if (env->GetArrayLength(c2wArr) < 16) {
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "c2w array too small");
+        return;
+    }
+
+    jshort* depth = env->GetShortArrayElements(depthArr, nullptr);
+    if (!depth) return;
+    jfloat* c2w = env->GetFloatArrayElements(c2wArr, nullptr);
+    if (!c2w) {
+        env->ReleaseShortArrayElements(depthArr, depth, JNI_ABORT);
+        return;
+    }
+
+    // ARCore DEPTH16 values are uint16_t (0 = no data, 1–65535 mm)
+    vol->integrate(reinterpret_cast<const uint16_t*>(depth), w, h,
                    fx, fy, cx, cy, c2w);
 
     env->ReleaseShortArrayElements(depthArr, depth, JNI_ABORT);
@@ -37,9 +55,10 @@ Java_com_robot_tsdf_TsdfVolume_nativeIntegrate(
 JNIEXPORT jobject JNICALL
 Java_com_robot_tsdf_TsdfVolume_nativeExtractMesh(JNIEnv* env, jobject, jlong handle)
 {
+    if (!handle) return nullptr;
     auto* vol = reinterpret_cast<TsdfVolume*>(handle);
     MeshBuffers mesh;
-    vol->extractMesh(mesh);  // calls runMarchingCubes internally
+    vol->extractMesh(mesh);
 
     if (mesh.vertexCount == 0) return nullptr;
 
@@ -65,6 +84,7 @@ Java_com_robot_tsdf_TsdfVolume_nativeExtractMesh(JNIEnv* env, jobject, jlong han
 JNIEXPORT void JNICALL
 Java_com_robot_tsdf_TsdfVolume_nativeReset(JNIEnv*, jobject, jlong handle)
 {
+    if (!handle) return;
     reinterpret_cast<TsdfVolume*>(handle)->reset();
 }
 

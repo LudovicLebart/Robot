@@ -9,27 +9,17 @@
 TsdfVolume::TsdfVolume(int sx, int sy, int sz, float voxelSize, float truncation)
     : sizeX_(sx), sizeY_(sy), sizeZ_(sz),
       voxelSize_(voxelSize), truncation_(truncation),
-      voxels_(sx * sy * sz),
-      dirtyBlocks_(((sx + 7) / 8) * ((sy + 7) / 8) * ((sz + 7) / 8), false)
+      voxels_(static_cast<size_t>(sx) * static_cast<size_t>(sy) * static_cast<size_t>(sz))
 {}
 
 void TsdfVolume::reset() {
     std::fill(voxels_.begin(), voxels_.end(), TsdfVoxel{});
-    std::fill(dirtyBlocks_.begin(), dirtyBlocks_.end(), false);
 }
 
-void TsdfVolume::markDirty(int x, int y, int z) {
-    int bx = x / blockSize_, by = y / blockSize_, bz = z / blockSize_;
-    int bsX = (sizeX_ + blockSize_ - 1) / blockSize_;
-    int bsY = (sizeY_ + blockSize_ - 1) / blockSize_;
-    dirtyBlocks_[bx + bsX * (by + bsY * bz)] = true;
-}
-
-void TsdfVolume::integrate(const int16_t* depthMm, int w, int h,
+void TsdfVolume::integrate(const uint16_t* depthMm, int w, int h,
                             float fx, float fy, float cx, float cy,
                             const float* c2w)
 {
-    const float maxWeightInv = 1.0f / 100.0f;
     const float newWeight = 1.0f;
 
     for (int vz = 0; vz < sizeZ_; ++vz) {
@@ -63,8 +53,8 @@ void TsdfVolume::integrate(const int16_t* depthMm, int w, int h,
                 int iv = static_cast<int>(v + 0.5f);
                 if (iu < 0 || iu >= w || iv < 0 || iv >= h) continue;
 
-                int16_t rawMm = depthMm[iv * w + iu];
-                if (rawMm <= 0) continue;
+                uint16_t rawMm = depthMm[iv * w + iu];
+                if (rawMm == 0) continue;  // 0 means no depth data
                 float measuredZ = rawMm * 0.001f;  // mm → m
 
                 float sdf = measuredZ - camZ;
@@ -75,7 +65,6 @@ void TsdfVolume::integrate(const int16_t* depthMm, int w, int h,
                 float w_new = voxel.weight + newWeight;
                 voxel.tsdf   = (voxel.weight * voxel.tsdf + newWeight * tsdfVal) / w_new;
                 voxel.weight = std::min(w_new, 100.0f);
-                markDirty(vx, vy, vz);
             }
         }
     }

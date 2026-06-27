@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 
 class ArSessionManager(private val context: Context) {
 
+    @Volatile
     private var session: Session? = null
 
     private val _state = MutableStateFlow<SessionState>(SessionState.Initializing)
@@ -57,8 +58,15 @@ class ArSessionManager(private val context: Context) {
         session?.setCameraTextureName(textureId)
     }
 
-    /** Returns null if session is not ready. */
-    fun update(): Frame? = session?.update()
+    /** Returns null if session is not ready or if an error occurs during update. */
+    fun update(): Frame? = try {
+        session?.update()
+    } catch (e: CameraNotAvailableException) {
+        _state.value = SessionState.Failed("Camera lost during update")
+        null
+    } catch (e: Exception) {
+        null
+    }
 
     fun isDepthSupported(): Boolean =
         session?.isDepthModeSupported(Config.DepthMode.RAW_DEPTH_ONLY) == true

@@ -20,12 +20,12 @@ public:
 
     /**
      * Integrate a depth image into the volume.
-     * @param depthMm   raw depth values in millimetres (DEPTH16 from ARCore)
+     * @param depthMm   raw depth values in millimetres (DEPTH16 from ARCore, uint16_t, 0 = invalid)
      * @param w,h       depth image dimensions
      * @param fx,fy,cx,cy  depth camera intrinsics (pixels)
      * @param cameraToWorld  column-major 4x4 transform
      */
-    void integrate(const int16_t* depthMm, int w, int h,
+    void integrate(const uint16_t* depthMm, int w, int h,
                    float fx, float fy, float cx, float cy,
                    const float* cameraToWorld);
 
@@ -49,14 +49,14 @@ private:
     float truncation_;
     std::vector<TsdfVoxel> voxels_;
 
-    int blockSize_ = 8;
-    std::vector<bool> dirtyBlocks_;
-
-    int idx(int x, int y, int z) const { return x + sizeX_ * (y + sizeY_ * z); }
+    // size_t arithmetic prevents int overflow for large grids (e.g. 300*150*300 > INT_MAX/4)
+    size_t idx(int x, int y, int z) const {
+        return static_cast<size_t>(x)
+             + static_cast<size_t>(sizeX_) * (static_cast<size_t>(y)
+             + static_cast<size_t>(sizeY_) * static_cast<size_t>(z));
+    }
 
     float originX_ = -3.0f;
     float originY_ = -1.5f;
     float originZ_ = -3.0f;
-
-    void markDirty(int x, int y, int z);
 };

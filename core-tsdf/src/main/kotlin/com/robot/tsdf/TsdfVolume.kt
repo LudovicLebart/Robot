@@ -38,37 +38,45 @@ class TsdfVolume(
     private var frameCount = 0
     private val meshExtractInterval = 30   // extract mesh every N integrated frames
 
-    /** Run this in a dedicated coroutine on Dispatchers.Default. */
+    /**
+     * Run this in a dedicated coroutine on Dispatchers.Default.
+     * nativeDestroy is called in the finally block so it only runs after the last
+     * nativeIntegrate call completes — preventing use-after-free when close() is called.
+     */
     suspend fun processLoop() = withContext(Dispatchers.Default) {
-        for (frame in frameChannel) {
-            nativeIntegrate(
-                handle,
-                frame.depthValues, frame.depthWidth, frame.depthHeight,
-                frame.fx, frame.fy, frame.cx, frame.cy,
-                frame.cameraToWorld,
-            )
-            frameCount++
-            if (frameCount % meshExtractInterval == 0) {
-                val raw = nativeExtractMesh(handle) ?: continue
-                // raw is interleaved [vx,vy,vz,nx,ny,nz,...]
-                val n = raw.size / 6
-                val vbuf = ByteBuffer.allocateDirect(n * 3 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
-                val nbuf = ByteBuffer.allocateDirect(n * 3 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
-                for (i in 0 until n) {
-                    vbuf.put(raw[i * 6 + 0]); vbuf.put(raw[i * 6 + 1]); vbuf.put(raw[i * 6 + 2])
-                    nbuf.put(raw[i * 6 + 3]); nbuf.put(raw[i * 6 + 4]); nbuf.put(raw[i * 6 + 5])
+        try {
+            for (frame in frameChannel) {
+                nativeIntegrate(
+                    handle,
+                    frame.depthValues, frame.depthWidth, frame.depthHeight,
+                    frame.fx, frame.fy, frame.cx, frame.cy,
+                    frame.cameraToWorld,
+                )
+                frameCount++
+                if (frameCount % meshExtractInterval == 0) {
+                    val raw = nativeExtractMesh(handle) ?: continue
+                    // raw is interleaved [vx,vy,vz,nx,ny,nz,...]
+                    val n = raw.size / 6
+                    val vbuf = ByteBuffer.allocateDirect(n * 3 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+                    val nbuf = ByteBuffer.allocateDirect(n * 3 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+                    for (i in 0 until n) {
+                        vbuf.put(raw[i * 6 + 0]); vbuf.put(raw[i * 6 + 1]); vbuf.put(raw[i * 6 + 2])
+                        nbuf.put(raw[i * 6 + 3]); nbuf.put(raw[i * 6 + 4]); nbuf.put(raw[i * 6 + 5])
+                    }
+                    vbuf.rewind(); nbuf.rewind()
+                    _mesh.value = MeshSnapshot(vbuf, nbuf, n)
                 }
-                vbuf.rewind(); nbuf.rewind()
-                _mesh.value = MeshSnapshot(vbuf, nbuf, n)
             }
+        } finally {
+            nativeDestroy(handle)
         }
     }
 
     fun reset() = nativeReset(handle)
 
+    /** Signal the loop to stop. nativeDestroy is called by processLoop's finally block. */
     fun close() {
         frameChannel.close()
-        nativeDestroy(handle)
     }
 
     private external fun nativeCreate(sx: Int, sy: Int, sz: Int, voxelSize: Float, truncation: Float): Long

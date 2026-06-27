@@ -3,6 +3,7 @@ package com.robot.net
 import com.robot.common.IrFrame
 import com.robot.common.IrReading
 import com.robot.common.IrSensor
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -33,6 +34,7 @@ class WebSocketEsp32Client(
 
     private suspend fun connect() {
         while (true) {
+            val closed = CompletableDeferred<Unit>()
             val request = Request.Builder().url("ws://$ip:$port/ir").build()
             webSocket = client.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(ws: WebSocket, response: Response) {
@@ -50,10 +52,15 @@ class WebSocketEsp32Client(
 
                 override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
                     ws.cancel()
+                    closed.complete(Unit)
+                }
+
+                override fun onClosed(ws: WebSocket, code: Int, reason: String) {
+                    closed.complete(Unit)
                 }
             })
 
-            // Wait for socket to fail then retry with backoff
+            closed.await()  // wait for socket to actually close before retrying
             delay(retryDelayMs)
             retryDelayMs = (retryDelayMs * 2).coerceAtMost(30_000L)
         }
