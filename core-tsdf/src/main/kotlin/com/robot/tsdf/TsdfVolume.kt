@@ -16,6 +16,7 @@ class TsdfVolume(
     sizeZ: Int = 300,
     voxelSizeM: Float = 0.02f,
     truncationM: Float = 0.04f,
+    private val onLog: (String) -> Unit = {},
 ) {
     companion object {
         init { System.loadLibrary("robot_tsdf") }
@@ -44,6 +45,7 @@ class TsdfVolume(
      * nativeIntegrate call completes — preventing use-after-free when close() is called.
      */
     suspend fun processLoop() = withContext(Dispatchers.Default) {
+        onLog("TSDF loop started handle=$handle")
         try {
             for (frame in frameChannel) {
                 nativeIntegrate(
@@ -53,10 +55,17 @@ class TsdfVolume(
                     frame.cameraToWorld,
                 )
                 frameCount++
+                if (frameCount == 1) onLog("TSDF first frame integrated ${frame.depthWidth}x${frame.depthHeight}")
+
                 if (frameCount % meshExtractInterval == 0) {
-                    val raw = nativeExtractMesh(handle) ?: continue
-                    // raw is interleaved [vx,vy,vz,nx,ny,nz,...]
+                    val raw = nativeExtractMesh(handle)
+                    if (raw == null || raw.isEmpty()) {
+                        onLog("TSDF mesh #${frameCount / meshExtractInterval}: 0 vertices (TSDF not dense enough yet)")
+                        continue
+                    }
                     val n = raw.size / 6
+                    onLog("TSDF mesh #${frameCount / meshExtractInterval}: $n vertices after $frameCount frames")
+
                     val vbuf = ByteBuffer.allocateDirect(n * 3 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
                     val nbuf = ByteBuffer.allocateDirect(n * 3 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
                     for (i in 0 until n) {
@@ -68,6 +77,7 @@ class TsdfVolume(
                 }
             }
         } finally {
+            onLog("TSDF loop ended after $frameCount frames")
             nativeDestroy(handle)
         }
     }

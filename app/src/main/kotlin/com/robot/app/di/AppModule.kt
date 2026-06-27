@@ -1,6 +1,7 @@
 package com.robot.app.di
 
 import android.content.Context
+import com.robot.app.OverlayLogger
 import com.robot.net.VerticalSafetyMonitor
 import com.robot.net.WebSocketEsp32Client
 import com.robot.slam.ArSessionManager
@@ -26,11 +27,11 @@ object AppModule {
     @Provides
     @Singleton
     fun provideArSessionManager(@ApplicationContext ctx: Context): ArSessionManager =
-        ArSessionManager(ctx)
+        ArSessionManager(ctx, onLog = OverlayLogger::log)
 
     @Provides
     @Singleton
-    fun provideTsdfVolume(): TsdfVolume = TsdfVolume()
+    fun provideTsdfVolume(): TsdfVolume = TsdfVolume(onLog = OverlayLogger::log)
 
     @Provides
     @Singleton

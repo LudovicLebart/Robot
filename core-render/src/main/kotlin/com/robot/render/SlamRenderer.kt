@@ -35,25 +35,28 @@ class SlamRenderer(
 
     @Volatile private var pendingMesh: MeshSnapshot? = null
 
+    private var depthSuccessCount = 0
+    private var depthFailCount = 0
+    private var lastTrackingState: TrackingState? = null
+
     fun onMeshSnapshot(snap: MeshSnapshot) {
         pendingMesh = snap
+        onLog("mesh received: ${snap.vertexCount} vertices")
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         val textureId = backgroundRenderer.init()
         meshRenderer.init()
         sessionManager.setCameraTextureName(textureId)
-        onLog("onSurfaceCreated: textureId=$textureId")
+        onLog("GL surface created texId=$textureId depthMode=${sessionManager.depthModeName}")
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         android.opengl.GLES30.glViewport(0, 0, width, height)
         val rotation = getDisplayRotation()
         sessionManager.setDisplayGeometry(rotation, width, height)
-        onLog("onSurfaceChanged: ${width}x${height} rotation=$rotation")
+        onLog("GL surface ${width}x${height} rot=$rotation")
     }
-
-    private var lastTrackingState: TrackingState? = null
 
     override fun onDrawFrame(gl: GL10?) {
         android.opengl.GLES30.glClear(
@@ -63,7 +66,7 @@ class SlamRenderer(
         val frame = sessionManager.update() ?: return
 
         if (frame.hasDisplayGeometryChanged()) {
-            onLog("displayGeometryChanged")
+            onLog("display geometry changed")
         }
 
         backgroundRenderer.draw(frame)
@@ -71,7 +74,7 @@ class SlamRenderer(
         val camera = frame.camera
         val trackingState = camera.trackingState
         if (trackingState != lastTrackingState) {
-            onLog("trackingState: $trackingState")
+            onLog("tracking: $trackingState")
             lastTrackingState = trackingState
         }
         if (trackingState != TrackingState.TRACKING) return
@@ -81,12 +84,24 @@ class SlamRenderer(
 
         val c2w = PoseExtractor.cameraToWorld(frame)
         if (c2w != null) {
-            val frameData = DepthFrameProvider.extract(frame, c2w)
+            val frameData = DepthFrameProvider.extract(frame, c2w) { err ->
+                depthFailCount++
+                if (depthFailCount == 1 || depthFailCount % 90 == 0) {
+                    onLog("depth FAIL #$depthFailCount: $err")
+                }
+            }
             if (frameData != null) {
-                tsdfVolume.frameChannel.trySend(frameData)
+                depthSuccessCount++
+                val sent = tsdfVolume.frameChannel.trySend(frameData).isSuccess
+                when (depthSuccessCount) {
+                    1 -> onLog("depth FIRST ${frameData.depthWidth}x${frameData.depthHeight} fx=${frameData.fx.toInt()} sent=$sent")
+                }
+                if (depthSuccessCount % 90 == 0) {
+                    val midIdx = frameData.depthWidth * frameData.depthHeight / 2
+                    val centerMm = frameData.depthValues[midIdx].toInt() and 0xFFFF
+                    onLog("depth #$depthSuccessCount center=${centerMm}mm fails=$depthFailCount tsdf=$sent")
+                }
                 onPoseUpdated(c2w)
-            } else {
-                onLog("depth: no data this frame")
             }
         }
 
