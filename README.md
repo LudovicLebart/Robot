@@ -23,6 +23,7 @@ Caméra RGB + IMU
 
 | Document | Contenu |
 |---|---|
+| [Plateforme](docs/platform.md) | Architecture matérielle et logicielle complète du robot (vision système) |
 | [Tutoriel](docs/tutorial.md) | Première mise en route, du dépôt à l'APK qui tourne |
 | [Guides pratiques](docs/how-to.md) | Modifier les paramètres TSDF, connecter l'ESP32, exporter un mesh |
 | [Architecture](docs/explanation.md) | Pourquoi ces choix techniques, comment le pipeline tient ensemble |
