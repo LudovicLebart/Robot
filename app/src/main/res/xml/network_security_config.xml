@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Robot app runs on a local WiFi network with the ESP32.
+    Cleartext (ws://) is allowed everywhere: this app never talks to the internet,
+    only to embedded hardware on the local network.
+-->
 <network-security-config>
-    <!-- Allow cleartext WebSocket to ESP32 on local network -->
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">192.168.1.0</domain>
-        <domain includeSubdomains="false">10.0.0.0</domain>
-    </domain-config>
-    <base-config cleartextTrafficPermitted="false" />
+    <base-config cleartextTrafficPermitted="true" />
 </network-security-config>
