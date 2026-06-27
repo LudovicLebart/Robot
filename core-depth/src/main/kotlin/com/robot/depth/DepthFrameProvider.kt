@@ -42,8 +42,13 @@ object DepthFrameProvider {
                 val width  = img.width
                 val height = img.height
 
-                val rawBuffer  = img.planes[0].buffer.asShortBuffer()
-                val depthValues = ShortArray(width * height).also { rawBuffer.get(it) }
+                // ARCore DEPTH16 format: bits[15:3] = depth in mm, bits[2:0] = confidence (0 = no data)
+                val buf = img.planes[0].buffer.asShortBuffer()
+                val depthValues = ShortArray(width * height)
+                for (i in 0 until width * height) {
+                    val raw = buf.get().toInt() and 0xFFFF
+                    depthValues[i] = if ((raw and 0x7) == 0) 0 else (raw ushr 3).toShort()
+                }
 
                 val intrinsics    = frame.camera.textureIntrinsics
                 val focalLength   = intrinsics.focalLength
