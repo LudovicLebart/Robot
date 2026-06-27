@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Robot SLAM</string>
+    <string name="esp32_ip_default">192.168.1.100</string>
+    <string name="esp32_port_default">8080</string>
+</resources>

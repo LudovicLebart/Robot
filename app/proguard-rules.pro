@@ -1,0 +1,2 @@
+-keep class com.google.ar.** { *; }
+-keep class com.robot.tsdf.TsdfVolume { *; }
