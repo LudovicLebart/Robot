@@ -1,7 +1,7 @@
 #pragma once
 #include "tsdf_volume.h"
+#include "block_hash.h"
 
-// Runs Marching Cubes on [TsdfVolume] and appends results into [MeshBuffers].
-void runMarchingCubes(const TsdfVolume& vol, int sizeX, int sizeY, int sizeZ,
-                      float voxelSize, float originX, float originY, float originZ,
-                      MeshBuffers& out);
+/** Runs Marching Cubes on one 8×8×8 block. Cross-block corners are fetched via vol.tsdfAt(). */
+void runMarchingCubesBlock(const TsdfVolume& vol, const BlockKey& bk,
+                            float voxelSize, MeshBuffers& out);

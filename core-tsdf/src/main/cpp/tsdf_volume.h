@@ -1,11 +1,9 @@
 #pragma once
 #include <vector>
+#include <unordered_map>
 #include <cstdint>
-
-struct TsdfVoxel {
-    float tsdf   = 1.0f;
-    float weight = 0.0f;
-};
+#include "block_hash.h"
+#include "tsdf_block.h"
 
 struct MeshBuffers {
     std::vector<float> vertices;  // x,y,z per vertex
@@ -15,49 +13,51 @@ struct MeshBuffers {
 
 class TsdfVolume {
 public:
+    // sx/sy/sz are ignored — voxel hashing grows unboundedly.
     TsdfVolume(int sx, int sy, int sz, float voxelSize, float truncation);
-    ~TsdfVolume() = default;
+    ~TsdfVolume();
 
     /**
-     * Integrate a depth image into the volume.
-     * @param depthMm   raw depth values in millimetres (DEPTH16 from ARCore, uint16_t, 0 = invalid)
-     * @param w,h       depth image dimensions
-     * @param fx,fy,cx,cy  depth camera intrinsics (pixels)
-     * @param cameraToWorld  column-major 4x4 transform
+     * Integrate one depth frame (pixel-driven ray marching).
+     * @param depthMm   DEPTH16 values: bits[15:3]=mm, bits[2:0]=confidence.
+     *                  Caller must zero out low-confidence pixels before passing.
+     * @param c2w       Column-major 4×4 camera-to-world transform.
      */
     void integrate(const uint16_t* depthMm, int w, int h,
                    float fx, float fy, float cx, float cy,
-                   const float* cameraToWorld);
+                   const float* c2w);
 
+    /** Re-march dirty blocks and aggregate all cached block meshes. */
     void extractMesh(MeshBuffers& out);
 
     void reset();
 
-    // Public for Marching Cubes access
-    float interpolate(int x, int y, int z) const;
-    int sizeX() const { return sizeX_; }
-    int sizeY() const { return sizeY_; }
-    int sizeZ() const { return sizeZ_; }
+    /** TSDF value at global voxel (gx,gy,gz). Returns 1.0 if absent or under-observed. */
+    float tsdfAt(int gx, int gy, int gz) const;
+
     float voxelSize() const { return voxelSize_; }
-    float originX() const { return originX_; }
-    float originY() const { return originY_; }
-    float originZ() const { return originZ_; }
 
 private:
-    int sizeX_, sizeY_, sizeZ_;
     float voxelSize_;
     float truncation_;
-    std::vector<TsdfVoxel> voxels_;
+    int   frameCount_ = 0;
 
-    // size_t arithmetic prevents int overflow for large grids (e.g. 300*150*300 > INT_MAX/4)
-    size_t idx(int x, int y, int z) const {
-        return static_cast<size_t>(x)
-             + static_cast<size_t>(sizeX_) * (static_cast<size_t>(y)
-             + static_cast<size_t>(sizeY_) * static_cast<size_t>(z));
+    std::unordered_map<BlockKey, TsdfBlock*, BlockKeyHash> blocks_;
+
+    struct BlockMesh {
+        std::vector<float> vertices;
+        std::vector<float> normals;
+        int vertexCount = 0;
+    };
+    std::unordered_map<BlockKey, BlockMesh, BlockKeyHash> meshCache_;
+
+    TsdfBlock* getOrCreate(const BlockKey& key);
+    void markDirtyNeighbor(int bx, int by, int bz);
+    void evictDistantBlocks(float camX, float camY, float camZ);
+
+    // Floor-based block coordinate: handles negative voxel indices correctly.
+    static int toBlock(int g) noexcept {
+        return (g >= 0) ? (g / BLOCK_SIZE)
+                        : ((g - BLOCK_SIZE + 1) / BLOCK_SIZE);
     }
-
-    float originX_ = -3.0f;
-    float originY_ = -1.5f;
-    float originZ_ = -3.0f;
-    int   integrateCount_ = 0;
 };
