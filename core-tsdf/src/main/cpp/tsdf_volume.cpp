@@ -44,12 +44,12 @@ void TsdfVolume::markDirtyNeighbor(int bx, int by, int bz) {
 float TsdfVolume::tsdfAt(int gx, int gy, int gz) const {
     int bx = toBlock(gx), by = toBlock(gy), bz = toBlock(gz);
     auto it = blocks_.find({bx, by, bz});
-    if (it == blocks_.end()) return 1.0f;
+    if (it == blocks_.end()) return 2.0f;  // unobserved sentinel
     int lx = gx - bx * BLOCK_SIZE;
     int ly = gy - by * BLOCK_SIZE;
     int lz = gz - bz * BLOCK_SIZE;
     const auto& v = it->second->at(lx, ly, lz);
-    return (v.weight >= 30.0f) ? v.tsdf : 1.0f;
+    return (v.weight >= 5.0f) ? v.tsdf : 2.0f;  // unobserved sentinel
 }
 
 void TsdfVolume::integrate(const uint16_t* depthMm, int w, int h,

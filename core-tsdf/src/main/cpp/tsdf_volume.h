@@ -32,7 +32,7 @@ public:
 
     void reset();
 
-    /** TSDF value at global voxel (gx,gy,gz). Returns 1.0 if absent or under-observed. */
+    /** TSDF value at global voxel (gx,gy,gz). Returns 2.0 (sentinel) if absent or under-observed. */
     float tsdfAt(int gx, int gy, int gz) const;
 
     float voxelSize() const { return voxelSize_; }

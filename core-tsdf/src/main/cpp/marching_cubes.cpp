@@ -53,6 +53,12 @@ void runMarchingCubesBlock(const TsdfVolume& vol, const BlockKey& bk,
         float py[8] = { cy,    cy,    cy+vs, cy+vs, cy,    cy,    cy+vs, cy+vs };
         float pz[8] = { cz,    cz,    cz,    cz,    cz+vs, cz+vs, cz+vs, cz+vs };
 
+        // Skip cells with any unobserved corner (sentinel = 2.0f).
+        // Without this, observed-to-unobserved boundaries produce false zero-crossings.
+        bool anyUnobserved = false;
+        for (int i = 0; i < 8; ++i) if (v[i] > 1.5f) { anyUnobserved = true; break; }
+        if (anyUnobserved) continue;
+
         int cubeIdx = 0;
         for (int i = 0; i < 8; ++i) if (v[i] < iso) cubeIdx |= (1 << i);
         if (edgeTable[cubeIdx] == 0) continue;
