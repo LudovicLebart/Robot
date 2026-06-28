@@ -15,7 +15,7 @@ class TsdfVolume(
     sizeY: Int = 150,
     sizeZ: Int = 300,
     voxelSizeM: Float = 0.02f,
-    truncationM: Float = 0.04f,
+    truncationM: Float = 0.08f,   // 8 cm = 4 voxels — robust to Neural Depth noise (~5–10 cm)
     private val onLog: (String) -> Unit = {},
 ) {
     companion object {

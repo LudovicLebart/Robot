@@ -59,4 +59,5 @@ private:
     float originX_ = -3.0f;
     float originY_ = -1.5f;
     float originZ_ = -3.0f;
+    int   integrateCount_ = 0;
 };

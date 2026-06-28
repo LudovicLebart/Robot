@@ -21,6 +21,7 @@ void TsdfVolume::integrate(const uint16_t* depthMm, int w, int h,
                             const float* c2w)
 {
     const float newWeight = 1.0f;
+    int updatedVoxels = 0;
 
     for (int vz = 0; vz < sizeZ_; ++vz) {
         for (int vy = 0; vy < sizeY_; ++vy) {
@@ -67,15 +68,27 @@ void TsdfVolume::integrate(const uint16_t* depthMm, int w, int h,
                 float w_new = voxel.weight + newWeight;
                 voxel.tsdf   = (voxel.weight * voxel.tsdf + newWeight * tsdfVal) / w_new;
                 voxel.weight = std::min(w_new, 100.0f);
+                updatedVoxels++;
             }
         }
+    }
+
+    integrateCount_++;
+    if (integrateCount_ == 1 || integrateCount_ % 30 == 0) {
+        __android_log_print(ANDROID_LOG_DEBUG, TAG,
+            "integrate #%d: %d voxels updated (depth %dx%d fx=%.1f)",
+            integrateCount_, updatedVoxels, w, h, fx);
     }
 }
 
 float TsdfVolume::interpolate(int x, int y, int z) const {
     if (x < 0 || x >= sizeX_ || y < 0 || y >= sizeY_ || z < 0 || z >= sizeZ_)
         return 1.0f;
-    return voxels_[idx(x,y,z)].tsdf;
+    // Require at least 3 observations before trusting this voxel.
+    // Single/double hits from noisy depth readings would otherwise produce
+    // isolated floating triangles in Marching Cubes.
+    const auto& v = voxels_[idx(x,y,z)];
+    return (v.weight >= 3.0f) ? v.tsdf : 1.0f;
 }
 
 void TsdfVolume::extractMesh(MeshBuffers& out) {
