@@ -42,12 +42,14 @@ object DepthFrameProvider {
                 val width  = img.width
                 val height = img.height
 
-                // ARCore DEPTH16 format: bits[15:3] = depth in mm, bits[2:0] = confidence (0 = no data)
+                // ARCore DEPTH16: bits[15:3] = depth in mm, bits[2:0] = confidence (0=invalid, 7=max).
+                // Require confidence >= 3 to suppress low-quality Neural Depth readings that
+                // would otherwise create ghost geometry in the TSDF.
                 val buf = img.planes[0].buffer.asShortBuffer()
                 val depthValues = ShortArray(width * height)
                 for (i in 0 until width * height) {
                     val raw = buf.get().toInt() and 0xFFFF
-                    depthValues[i] = if ((raw and 0x7) == 0) 0 else (raw ushr 3).toShort()
+                    depthValues[i] = if ((raw and 0x7) < 3) 0 else (raw ushr 3).toShort()
                 }
 
                 val intrinsics    = frame.camera.textureIntrinsics

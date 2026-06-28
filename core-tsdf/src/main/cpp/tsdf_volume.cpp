@@ -93,7 +93,7 @@ float TsdfVolume::interpolate(int x, int y, int z) const {
     // Single/double hits from noisy depth readings would otherwise produce
     // isolated floating triangles in Marching Cubes.
     const auto& v = voxels_[idx(x,y,z)];
-    return (v.weight >= 3.0f) ? v.tsdf : 1.0f;
+    return (v.weight >= 5.0f) ? v.tsdf : 1.0f;
 }
 
 void TsdfVolume::extractMesh(MeshBuffers& out) {

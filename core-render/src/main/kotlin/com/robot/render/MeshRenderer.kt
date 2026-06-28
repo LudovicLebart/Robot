@@ -114,22 +114,25 @@ class MeshRenderer {
     }
 
     /**
-     * Draw the mesh for the top-down plan view using an orthographic projection
-     * centered 5 m above [cameraPos].
+     * Draw the mesh for the top-down plan view.
+     * Always shows the full TSDF grid (±3 m in X/Z) from a fixed overhead camera
+     * so the map remains visible even when the robot walks outside the grid bounds.
+     * [cameraPos] is currently unused but kept for a future "locate robot" marker.
      */
-    fun drawPlanView(cameraPos: FloatArray) {
+    fun drawPlanView(@Suppress("UNUSED_PARAMETER") cameraPos: FloatArray) {
         if (currentVertexCount == 0) return
 
         val view = FloatArray(16)
+        // Eye fixed 8 m above the grid centre (0, 0, 0), looking straight down.
         Matrix.setLookAtM(view, 0,
-            cameraPos[0], cameraPos[1] + 5f, cameraPos[2],  // eye: 5 m above robot
-            cameraPos[0], cameraPos[1],       cameraPos[2],  // look at robot
-            0f, 0f, -1f,                                      // north = world -Z
+            0f, 8f, 0f,   // eye: directly above grid centre
+            0f, 0f, 0f,   // look at grid centre
+            0f, 0f, -1f,  // north = world –Z
         )
 
         val proj = FloatArray(16)
-        // 6 m × 6 m orthographic window centred on robot position
-        Matrix.orthoM(proj, 0, -3f, 3f, -3f, 3f, 0.1f, 12f)
+        // Tight ortho covering the full TSDF grid extent (6 m × 6 m + 10 % margin)
+        Matrix.orthoM(proj, 0, -3.3f, 3.3f, -3.3f, 3.3f, 0.5f, 16f)
 
         drawInternal(view, proj,
             tintR = 0.2f, tintG = 1.0f, tintB = 0.4f, alpha = 1.0f)

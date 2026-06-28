@@ -38,6 +38,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var logScrollView: ScrollView
     private lateinit var btnLog: Button
     private lateinit var btnPlan: Button
+    private lateinit var btnSave: Button
     private var logVisible = false
 
     private val cameraPermissionLauncher = registerForActivityResult(
@@ -86,10 +87,6 @@ class MainActivity : ComponentActivity() {
         btnPlan = makeButton("PLAN") {
             val next = !renderer.planViewEnabled
             renderer.planViewEnabled = next
-            // Update button appearance to reflect state
-            glView.queueEvent {
-                // runs on GL thread — nothing to do, just use the volatile flag
-            }
             runOnUiThread {
                 btnPlan.setBackgroundColor(
                     if (next) Color.argb(220, 0, 100, 0)
@@ -99,10 +96,21 @@ class MainActivity : ComponentActivity() {
             OverlayLogger.log(if (next) "Plan view ON" else "Plan view OFF (AR mode)")
         }
 
+        btnSave = makeButton("SAVE") {
+            btnSave.isEnabled = false
+            viewModel.saveMesh { path ->
+                btnSave.isEnabled = true
+                Toast.makeText(this,
+                    "adb pull \"$path\"",
+                    Toast.LENGTH_LONG).show()
+            }
+        }
+
         val buttonRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             addView(btnLog,  LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
-            addView(btnPlan, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+            addView(btnPlan, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
+            addView(btnSave, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
         }
 
         // ── Root layout ──────────────────────────────────────────────────────
