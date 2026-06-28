@@ -118,16 +118,27 @@ class SlamRenderer(
             }
             if (frameData != null) {
                 depthSuccessCount++
-                val sent = tsdfVolume.frameChannel.trySend(frameData).isSuccess
+                val w = frameData.depthWidth
+                val h = frameData.depthHeight
+                val total = w * h
+                // True image-centre pixel (row=h/2, col=w/2)
+                val centerIdx = (h / 2) * w + (w / 2)
+                val centerMm = frameData.depthValues[centerIdx].toInt() and 0xFFFF
+                val validCount = frameData.depthValues.count { it.toInt() != 0 }
+                val validPct = validCount * 100 / total
+
+                // Skip frames where almost no pixels survived the confidence filter —
+                // they add negligible TSDF signal but consume pipeline time.
+                val sent = if (validPct >= 5) {
+                    tsdfVolume.frameChannel.trySend(frameData).isSuccess
+                } else {
+                    false
+                }
+
                 if (depthSuccessCount == 1 || depthSuccessCount % 90 == 0) {
-                    val total = frameData.depthWidth * frameData.depthHeight
-                    val midIdx = total / 2
-                    val centerMm = frameData.depthValues[midIdx].toInt() and 0xFFFF
-                    val validCount = frameData.depthValues.count { it.toInt() != 0 }
-                    val validPct = validCount * 100 / total
                     val px = c2w[12]; val py = c2w[13]; val pz = c2w[14]
                     if (depthSuccessCount == 1) {
-                        onLog("depth FIRST ${frameData.depthWidth}x${frameData.depthHeight} " +
+                        onLog("depth FIRST ${w}x${h} " +
                               "fx=${frameData.fx.toInt()} fy=${frameData.fy.toInt()} " +
                               "cx=${frameData.cx.toInt()} cy=${frameData.cy.toInt()}")
                     }
