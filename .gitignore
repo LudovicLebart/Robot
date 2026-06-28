@@ -32,3 +32,9 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Debug artifacts
+*.ply
+*.png
+*.jpg
+*.jpeg

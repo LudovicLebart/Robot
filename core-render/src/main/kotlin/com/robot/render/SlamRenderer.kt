@@ -36,7 +36,7 @@ class SlamRenderer(
 
     @Volatile private var pendingMesh: MeshSnapshot? = null
     @Volatile var planViewEnabled = false
-    @Volatile var meshVisible = true
+    @Volatile var meshVisible = false
 
     private var lastKnownPos = floatArrayOf(0f, 0f, 0f)
 
@@ -94,7 +94,7 @@ class SlamRenderer(
             // Dark background — no camera pass-through
             GLES30.glClearColor(0.05f, 0.05f, 0.08f, 1f)
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
-            meshRenderer.drawPlanView(lastKnownPos)
+            if (meshVisible) meshRenderer.drawPlanView(lastKnownPos)
             floorCeilingRenderer.draw(planViewMatrix(), planProjMatrix())
             return
         }

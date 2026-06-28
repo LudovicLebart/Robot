@@ -49,7 +49,7 @@ float TsdfVolume::tsdfAt(int gx, int gy, int gz) const {
     int ly = gy - by * BLOCK_SIZE;
     int lz = gz - bz * BLOCK_SIZE;
     const auto& v = it->second->at(lx, ly, lz);
-    return (v.weight >= 5.0f) ? v.tsdf : 1.0f;
+    return (v.weight >= 30.0f) ? v.tsdf : 1.0f;
 }
 
 void TsdfVolume::integrate(const uint16_t* depthMm, int w, int h,

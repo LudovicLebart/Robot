@@ -40,7 +40,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var btnPlan: Button
     private lateinit var btnSave: Button
     private var logVisible = false
-    private var meshVisible = true
+    private var meshVisible = false
 
     private val cameraPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -106,6 +106,7 @@ class MainActivity : ComponentActivity() {
                 else Color.argb(220, 80, 0, 0)
             )
         }
+        btnMesh.post { btnMesh.setBackgroundColor(Color.argb(220, 80, 0, 0)) } // hidden by default
 
         btnSave = makeButton("SAVE") {
             btnSave.isEnabled = false

@@ -26,7 +26,7 @@ class FloorCeilingDetector {
         private const val BIN_COUNT = ((Y_MAX - Y_MIN) / BIN_SIZE).toInt()  // 100
         private const val MIN_POINTS = 500       // points in a bin to confirm a plane
         private const val FLOOR_MARGIN = 0.3f    // floor must be below cameraY − margin
-        private const val CEILING_MARGIN = 0.5f  // ceiling must be above cameraY + margin
+        private const val CEILING_MARGIN = 1.2f  // ceiling must be above cameraY + margin (skip tables/shelves)
         private const val EMA_ALPHA = 0.1f       // smoothing factor
         private const val PIXEL_STRIDE = 4       // sample every 4th row / 4th column
     }
