@@ -36,6 +36,7 @@ class SlamRenderer(
 
     @Volatile private var pendingMesh: MeshSnapshot? = null
     @Volatile var planViewEnabled = false
+    @Volatile var meshVisible = true
 
     private var lastKnownPos = floatArrayOf(0f, 0f, 0f)
 
@@ -167,7 +168,7 @@ class SlamRenderer(
             }
         }
 
-        meshRenderer.draw(viewMatrix, projMatrix)
+        if (meshVisible) meshRenderer.draw(viewMatrix, projMatrix)
         floorCeilingRenderer.draw(viewMatrix, projMatrix)
     }
 

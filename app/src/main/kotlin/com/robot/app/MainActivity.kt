@@ -40,6 +40,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var btnPlan: Button
     private lateinit var btnSave: Button
     private var logVisible = false
+    private var meshVisible = true
 
     private val cameraPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -96,6 +97,16 @@ class MainActivity : ComponentActivity() {
             OverlayLogger.log(if (next) "Plan view ON" else "Plan view OFF (AR mode)")
         }
 
+        lateinit var btnMesh: Button
+        btnMesh = makeButton("MESH") {
+            meshVisible = !meshVisible
+            renderer.meshVisible = meshVisible
+            btnMesh.setBackgroundColor(
+                if (meshVisible) Color.argb(180, 0, 0, 80)
+                else Color.argb(220, 80, 0, 0)
+            )
+        }
+
         btnSave = makeButton("SAVE") {
             btnSave.isEnabled = false
             viewModel.saveMesh { path ->
@@ -110,6 +121,7 @@ class MainActivity : ComponentActivity() {
             orientation = LinearLayout.HORIZONTAL
             addView(btnLog,  LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
             addView(btnPlan, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
+            addView(btnMesh, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
             addView(btnSave, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
         }
 
