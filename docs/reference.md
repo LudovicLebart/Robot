@@ -110,18 +110,26 @@ Résultat de Marching Cubes, prêt à uploader en VBO OpenGL.
 
 | Paramètre | Défaut | Description |
 |---|---|---|
-| `sizeX`, `sizeY`, `sizeZ` | 300, 150, 300 | Dimensions de la grille en voxels |
+| `sizeX`, `sizeY`, `sizeZ` | 300, 150, 300 | **Ignorés depuis session 4** — voxel hashing, carte illimitée |
 | `voxelSizeM` | 0.02 | Taille d'un voxel en mètres |
-| `truncationM` | 0.04 | Troncature TSDF en mètres (recommandé : 2× voxelSize) |
+| `truncationM` | 0.08 | Troncature TSDF en mètres (= 4 voxels pour ARCore Neural Depth) |
+
+**Architecture C++ interne (depuis session 4 — voxel hashing) :**
+
+- `std::unordered_map<BlockKey, TsdfBlock*>` — blocs 8×8×8 alloués à la demande
+- Intégration **pixel-driven** : pour chaque pixel depth, marche le long du rayon dans la bande ±truncation (stepSize = voxelSize/2)
+- Depth range : [0.3 m, **8.0 m**] (relevé depuis 3 m en session 4)
+- `extractMesh()` : re-marche uniquement les blocs `dirty`, agrège le cache par bloc
+- Éviction : blocs à >12 m + âge >300 frames, toutes les 60 frames
 
 ### Fonctions JNI C++
 
 | Fonction JNI (Kotlin) | Signature C++ | Description |
 |---|---|---|
-| `nativeCreate` | `TsdfVolume*(int,int,int,float,float)` | Alloue le volume sur le heap natif, retourne un handle opaque. |
-| `nativeIntegrate` | `void integrate(const uint16_t*, int, int, float×4, float×16)` | Intègre une depth map dans le volume. |
-| `nativeExtractMesh` | `FloatArray?` interleaved `[x,y,z,nx,ny,nz,…]` | Lance Marching Cubes, retourne `null` si aucun triangle. |
-| `nativeReset` | `void reset()` | Remet tous les voxels à leur état initial. |
+| `nativeCreate` | `TsdfVolume*(int,int,int,float,float)` | Alloue le volume sur le heap natif. `sx/sy/sz` ignorés (voxel hashing). |
+| `nativeIntegrate` | `void integrate(const uint16_t*, int, int, float×4, float×16)` | Intègre une depth map par ray marching pixel-driven. |
+| `nativeExtractMesh` | `FloatArray?` interleaved `[x,y,z,nx,ny,nz,…]` | Re-marche les blocs dirty, retourne `null` si aucun triangle. |
+| `nativeReset` | `void reset()` | Supprime tous les blocs et vide le cache mesh. |
 | `nativeDestroy` | `delete vol` | Libère la mémoire native. Appelé uniquement depuis `processLoop.finally`. |
 
 ---

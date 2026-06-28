@@ -112,12 +112,12 @@ adb logcat -v time | findstr "TSDF mesh"
 
 ---
 
-## État courant du projet (session 3 — 27 juin 2026)
+## État courant du projet (session 4 — 28 juin 2026)
 
-**Pipeline fonctionnel :** ARCore → DEPTH16 décodé (confiance ≥3, clamp 0.3–3 m) → TSDF (truncation 8 cm, weight ≥5) → Marching Cubes → Mesh opaque cyan + bouton SAVE → PLY.
+**Pipeline fonctionnel :** ARCore → DEPTH16 décodé (confiance ≥3, clamp 0.3–8 m) → TSDF voxel hashing (truncation 8 cm, weight ≥5, carte illimitée) → Marching Cubes incrémental → Mesh opaque cyan + bouton SAVE → PLY.
 
-**Améliorations cumulées (sessions 2 + 2b + 3) :**
-- DEPTH16 : décodage `(raw >> 3)`, filtre confiance ≥3/7, clamp [300 mm, 3000 mm]
+**Améliorations cumulées (sessions 1 → 4) :**
+- DEPTH16 : décodage `(raw >> 3)`, filtre confiance ≥3/7, clamp [300 mm, 8000 mm]
 - Y-flip corrigé dans la projection TSDF (`-camY`)
 - Truncation élargie : 4 cm → 8 cm (bande 4 voxels pour ARCore Neural Depth)
 - Weight filter : voxels avec poids < 5 ignorés par Marching Cubes
@@ -125,6 +125,13 @@ adb logcat -v time | findstr "TSDF mesh"
 - Mesh opaque (alpha 1.0), teinte cyan
 - Vue plan : caméra overhead fixe `(0,8,0)`, ortho ±3.3 m, UV corrigés en rotation
 - Export PLY binaire via bouton SAVE + `adb pull`
+- **[Session 4]** TSDF voxel hashing : grille dense 300×150×300 remplacée par une carte illimitée
+  - Blocs 8×8×8 alloués à la demande (`std::unordered_map` + hash de Teschner)
+  - Intégration pixel-driven (~1.2M mises à jour/frame vs 13.5M pour la grille dense)
+  - Depth range élargi : 3 m → **8 m** (plus de contrainte de bord de grille)
+  - Marching Cubes incrémental : seuls les blocs `dirty` sont re-marchés
+  - Éviction automatique : blocs à >12 m + âge >300 frames supprimés toutes les 60 frames
+  - API Kotlin/JNI inchangée (`sizeX/Y/Z` ignorés par le C++)
 
 **TODO prioritaires :**
 
@@ -133,8 +140,9 @@ adb logcat -v time | findstr "TSDF mesh"
 | Haute | Tester sur Pixel 9 — vérifier mesh visible après ~30 s de sweep | En attente |
 | Haute | Vérifier vertices en vue PLAN (doit monter à >10 000) | En attente |
 | Haute | Finaliser installation Android Studio + NDK sur PC Windows | En cours |
-| Moyenne | Volume TSDF glissant centré sur le robot | À faire |
+| Moyenne | **[Phase B]** Grille d'occupation 2D (`core-nav`) pour la navigation | À faire |
 | Basse | `core-net` WebSocket ESP32 + `SafetyState` IR | À faire |
+| ~~Moyenne~~ | ~~Volume TSDF glissant centré sur le robot~~ | **RÉSOLU** par voxel hashing |
 | ~~Basse~~ | ~~Export `.ply` pour validation MeshLab~~ | **FAIT** |
 
 ---
@@ -153,7 +161,7 @@ adb logcat -v time | findstr "TSDF mesh"
 ## Mise à jour de la documentation
 
 - Mettre à jour la doc **uniquement après validation explicite** de l'utilisateur
-- Nouveau journal de session : `docs/journal-session-N.md` (incrémenter N — actuel : session 3)
+- Nouveau journal de session : `docs/journal-session-N.md` (incrémenter N — actuel : session 4)
 - Format entrée journal : `## [DATE] [TAG] Action effectuée → Résultat.`
 - Mettre à jour `docs/reference.md` si un module ou type partagé change
 - Mettre à jour `README.md` si l'architecture globale change
