@@ -60,6 +60,10 @@ void TsdfVolume::integrate(const uint16_t* depthMm, int w, int h,
                 if (rawMm == 0) continue;  // 0 means no depth data
                 float measuredZ = rawMm * 0.001f;  // mm → m
 
+                // Ignore depths outside the useful range.
+                // <0.3 m: too close, likely noise. >3.0 m: near or beyond grid boundary (-3..+3 m).
+                if (measuredZ < 0.3f || measuredZ > 3.0f) continue;
+
                 float sdf = measuredZ - camZ;
                 if (sdf < -truncation_) continue;
                 float tsdfVal = std::min(sdf / truncation_, 1.0f);

@@ -41,6 +41,8 @@ class SlamRenderer(
     private var depthFailCount = 0
     private var lastTrackingState: TrackingState? = null
 
+    private val Float.format1 get() = "%.1f".format(this)
+
     fun onMeshSnapshot(snap: MeshSnapshot) {
         pendingMesh = snap
         onLog("mesh ready: ${snap.vertexCount} verts (pending GL upload)")
@@ -113,12 +115,20 @@ class SlamRenderer(
             if (frameData != null) {
                 depthSuccessCount++
                 val sent = tsdfVolume.frameChannel.trySend(frameData).isSuccess
-                if (depthSuccessCount == 1) {
-                    onLog("depth FIRST ${frameData.depthWidth}x${frameData.depthHeight} fx=${frameData.fx.toInt()} sent=$sent")
-                } else if (depthSuccessCount % 90 == 0) {
-                    val midIdx = frameData.depthWidth * frameData.depthHeight / 2
+                if (depthSuccessCount == 1 || depthSuccessCount % 90 == 0) {
+                    val total = frameData.depthWidth * frameData.depthHeight
+                    val midIdx = total / 2
                     val centerMm = frameData.depthValues[midIdx].toInt() and 0xFFFF
-                    onLog("depth #$depthSuccessCount center=${centerMm}mm fails=$depthFailCount tsdf=$sent")
+                    val validCount = frameData.depthValues.count { it.toInt() != 0 }
+                    val validPct = validCount * 100 / total
+                    val px = c2w[12]; val py = c2w[13]; val pz = c2w[14]
+                    if (depthSuccessCount == 1) {
+                        onLog("depth FIRST ${frameData.depthWidth}x${frameData.depthHeight} " +
+                              "fx=${frameData.fx.toInt()} fy=${frameData.fy.toInt()} " +
+                              "cx=${frameData.cx.toInt()} cy=${frameData.cy.toInt()}")
+                    }
+                    onLog("depth #$depthSuccessCount center=${centerMm}mm valid=${validPct}% " +
+                          "pos=(${px.format1}/${py.format1}/${pz.format1})m tsdf=$sent")
                 }
                 onPoseUpdated(c2w)
             }
