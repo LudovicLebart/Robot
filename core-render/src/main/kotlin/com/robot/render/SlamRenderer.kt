@@ -71,6 +71,10 @@ class SlamRenderer(
             onLog("display geometry changed")
         }
 
+        // Keep camera UVs current regardless of render mode — fixes stale UVs after
+        // rotating the device while plan view is active.
+        backgroundRenderer.updateUVsIfNeeded(frame)
+
         // Upload any pending mesh regardless of view mode
         pendingMesh?.let { snap ->
             meshRenderer.uploadMesh(snap)

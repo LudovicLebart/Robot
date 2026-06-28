@@ -36,6 +36,8 @@ class BackgroundRenderer {
          1f,  1f,
     )
     private val transformedUvs = FloatArray(8)
+    private val uvStagingBuf = ByteBuffer.allocateDirect(8 * 4)
+        .order(ByteOrder.nativeOrder()).asFloatBuffer()
 
     private val vertexSrc = """
         #version 300 es
@@ -109,22 +111,29 @@ class BackgroundRenderer {
         return textureId
     }
 
+    /**
+     * Recomputes UV coordinates if the display geometry has changed.
+     * Must be called every frame regardless of render mode so that UVs stay
+     * current even when the camera background is not drawn (e.g. plan view).
+     */
+    fun updateUVsIfNeeded(frame: Frame) {
+        if (!frame.hasDisplayGeometryChanged()) return
+        frame.transformCoordinates2d(
+            Coordinates2d.OPENGL_NORMALIZED_DEVICE_COORDINATES,
+            ndcForTransform,
+            Coordinates2d.TEXTURE_NORMALIZED,
+            transformedUvs,
+        )
+        uvStagingBuf.rewind()
+        uvStagingBuf.put(transformedUvs)
+        uvStagingBuf.rewind()
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, uvVbo)
+        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, uvStagingBuf.capacity() * 4, uvStagingBuf, GLES30.GL_DYNAMIC_DRAW)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
+    }
+
     fun draw(frame: Frame) {
-        // Recompute UVs whenever display geometry changes (rotation, resize)
-        if (frame.hasDisplayGeometryChanged()) {
-            frame.transformCoordinates2d(
-                Coordinates2d.OPENGL_NORMALIZED_DEVICE_COORDINATES,
-                ndcForTransform,
-                Coordinates2d.TEXTURE_NORMALIZED,
-                transformedUvs,
-            )
-            val uvBuf = ByteBuffer.allocateDirect(transformedUvs.size * 4)
-                .order(ByteOrder.nativeOrder()).asFloatBuffer()
-            uvBuf.put(transformedUvs).rewind()
-            GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, uvVbo)
-            GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, uvBuf.capacity() * 4, uvBuf, GLES30.GL_DYNAMIC_DRAW)
-            GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
-        }
+        updateUVsIfNeeded(frame)
 
         GLES30.glDisable(GLES30.GL_DEPTH_TEST)
         GLES30.glDepthMask(false)

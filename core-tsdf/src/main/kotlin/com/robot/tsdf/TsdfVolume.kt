@@ -82,7 +82,10 @@ class TsdfVolume(
         }
     }
 
-    fun reset() = nativeReset(handle)
+    fun reset() {
+        frameCount = 0
+        nativeReset(handle)
+    }
 
     /** Signal the loop to stop. nativeDestroy is called by processLoop's finally block. */
     fun close() {

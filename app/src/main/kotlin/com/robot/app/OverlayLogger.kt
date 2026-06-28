@@ -11,10 +11,11 @@ object OverlayLogger {
 
     fun log(msg: String) {
         android.util.Log.d("RobotOverlay", msg)
-        synchronized(lines) {
+        val snapshot = synchronized(lines) {
             if (lines.size >= 80) lines.removeFirst()
             lines.addLast(msg)
-            _text.value = lines.joinToString("\n")
+            lines.toList()
         }
+        _text.value = snapshot.joinToString("\n")
     }
 }

@@ -14,6 +14,7 @@ TsdfVolume::TsdfVolume(int sx, int sy, int sz, float voxelSize, float truncation
 
 void TsdfVolume::reset() {
     std::fill(voxels_.begin(), voxels_.end(), TsdfVoxel{});
+    integrateCount_ = 0;
 }
 
 void TsdfVolume::integrate(const uint16_t* depthMm, int w, int h,
