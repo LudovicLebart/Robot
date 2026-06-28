@@ -9,7 +9,7 @@ Au début de chaque session, lire ces fichiers dans l'ordre — ils sont la **so
 1. `docs/platform.md` — architecture matérielle et logicielle complète (vision système)
 2. `docs/explanation.md` — pipeline de threading, TSDF, choix techniques (le POURQUOI)
 3. `docs/reference.md` — modules, types partagés, API JNI, dépendances
-4. `docs/journal-session-2.md` — état actuel du pipeline, bugs corrigés, TODO prioritaires
+4. `docs/journal-session-3.md` — état actuel du pipeline, bugs corrigés, TODO prioritaires
 
 Le `docs/tutorial.md` et `docs/how-to.md` sont en lecture **à la demande uniquement** (installation, recettes courantes).
 
@@ -112,26 +112,30 @@ adb logcat -v time | findstr "TSDF mesh"
 
 ---
 
-## État courant du projet (session 2 — 28 juin 2026)
+## État courant du projet (session 3 — 27 juin 2026)
 
-**Pipeline fonctionnel :** ARCore → DEPTH16 décodé → TSDF → Marching Cubes → Mesh opaque cyan.
+**Pipeline fonctionnel :** ARCore → DEPTH16 décodé (confiance ≥3, clamp 0.3–3 m) → TSDF (truncation 8 cm, weight ≥5) → Marching Cubes → Mesh opaque cyan + bouton SAVE → PLY.
 
-**Bugs corrigés :**
-- DEPTH16 : lecture correcte `(raw >> 3)` avec filtre de confiance
-- Y-flip dans la projection TSDF (`-camY` au lieu de `camY`)
+**Améliorations cumulées (sessions 2 + 2b + 3) :**
+- DEPTH16 : décodage `(raw >> 3)`, filtre confiance ≥3/7, clamp [300 mm, 3000 mm]
+- Y-flip corrigé dans la projection TSDF (`-camY`)
+- Truncation élargie : 4 cm → 8 cm (bande 4 voxels pour ARCore Neural Depth)
+- Weight filter : voxels avec poids < 5 ignorés par Marching Cubes
 - Alignement 16 Ko pour Android 15 / Pixel 9
-- Mesh invisible (alpha 0.7 → rendu opaque)
+- Mesh opaque (alpha 1.0), teinte cyan
+- Vue plan : caméra overhead fixe `(0,8,0)`, ortho ±3.3 m, UV corrigés en rotation
+- Export PLY binaire via bouton SAVE + `adb pull`
 
 **TODO prioritaires :**
 
-| Priorité | Tâche |
-|----------|-------|
-| Haute | Tester sur Pixel 9 — vérifier mesh visible après ~30 s de sweep |
-| Haute | Vérifier vertices en vue PLAN (doit monter à >10 000) |
-| Moyenne | Filtrage confiance DEPTH16 : ignorer pixels confiance 1–2, garder 3–7 |
-| Moyenne | Volume TSDF glissant centré sur le robot |
-| Basse | Export `.ply` pour validation MeshLab |
-| Basse | `core-net` WebSocket ESP32 + `SafetyState` IR |
+| Priorité | Tâche | Statut |
+|----------|-------|--------|
+| Haute | Tester sur Pixel 9 — vérifier mesh visible après ~30 s de sweep | En attente |
+| Haute | Vérifier vertices en vue PLAN (doit monter à >10 000) | En attente |
+| Haute | Finaliser installation Android Studio + NDK sur PC Windows | En cours |
+| Moyenne | Volume TSDF glissant centré sur le robot | À faire |
+| Basse | `core-net` WebSocket ESP32 + `SafetyState` IR | À faire |
+| ~~Basse~~ | ~~Export `.ply` pour validation MeshLab~~ | **FAIT** |
 
 ---
 
@@ -149,7 +153,7 @@ adb logcat -v time | findstr "TSDF mesh"
 ## Mise à jour de la documentation
 
 - Mettre à jour la doc **uniquement après validation explicite** de l'utilisateur
-- Nouveau journal de session : `docs/journal-session-N.md` (incrémenter N)
+- Nouveau journal de session : `docs/journal-session-N.md` (incrémenter N — actuel : session 3)
 - Format entrée journal : `## [DATE] [TAG] Action effectuée → Résultat.`
 - Mettre à jour `docs/reference.md` si un module ou type partagé change
 - Mettre à jour `README.md` si l'architecture globale change
