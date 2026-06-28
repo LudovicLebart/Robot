@@ -62,8 +62,15 @@ Java_com_robot_tsdf_TsdfVolume_nativeExtractMesh(JNIEnv* env, jobject, jlong han
 
     if (mesh.vertexCount == 0) return nullptr;
 
+    // Cap to avoid int overflow and excessive Java heap allocation (~7 MB at 300k verts)
+    const int maxVerts = 300000;
+    if (mesh.vertexCount > maxVerts) {
+        __android_log_print(ANDROID_LOG_WARN, TAG, "nativeExtractMesh: capping %d verts to %d", mesh.vertexCount, maxVerts);
+        mesh.vertexCount = maxVerts;
+    }
+
     // Return a float[] interleaved [vx,vy,vz, nx,ny,nz, ...] per vertex
-    int totalFloats = mesh.vertexCount * 6;
+    jsize totalFloats = static_cast<jsize>(mesh.vertexCount) * 6;
     jfloatArray result = env->NewFloatArray(totalFloats);
     if (!result) return nullptr;
 

@@ -1,7 +1,6 @@
 package com.robot.app
 
 import android.app.Application
-import android.os.Environment
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.robot.common.SafetyState
@@ -41,9 +40,7 @@ class SlamViewModel @Inject constructor(
         val snap = tsdfVolume.mesh.value
         if (snap.vertexCount == 0) { onDone("No mesh yet"); return }
         viewModelScope.launch(Dispatchers.IO) {
-            // Use public Downloads so adb pull works without run-as on Android 11+
-            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            dir.mkdirs()
+            val dir = getApplication<Application>().getExternalFilesDir(null)!!
             val file = File(dir, "mesh_${System.currentTimeMillis()}.ply")
             val r = PlyExporter.write(snap, file)
             val kb = r.sizeBytes / 1024

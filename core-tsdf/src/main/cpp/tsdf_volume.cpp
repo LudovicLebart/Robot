@@ -25,7 +25,13 @@ void TsdfVolume::reset() {
 TsdfBlock* TsdfVolume::getOrCreate(const BlockKey& key) {
     auto it = blocks_.find(key);
     if (it != blocks_.end()) return it->second;
-    auto* b = new TsdfBlock{};
+    TsdfBlock* b;
+    try {
+        b = new TsdfBlock{};
+    } catch (const std::bad_alloc&) {
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "getOrCreate: out of memory (%zu blocks)", blocks_.size());
+        return nullptr;
+    }
     blocks_[key] = b;
     return b;
 }
@@ -54,11 +60,19 @@ void TsdfVolume::integrate(const uint16_t* depthMm, int w, int h,
 
     // Camera position and rotation from column-major c2w.
     float camPosX = c2w[12], camPosY = c2w[13], camPosZ = c2w[14];
+    if (!std::isfinite(camPosX) || !std::isfinite(camPosY) || !std::isfinite(camPosZ)) {
+        __android_log_print(ANDROID_LOG_WARN, TAG, "integrate #%d: non-finite camera position, skipping frame", frameCount_);
+        return;
+    }
     // Camera-to-world rotation: world = R * cam + t.
     // R columns: c2w[0..2], c2w[4..6], c2w[8..10]
     float r00=c2w[0],  r01=c2w[1],  r02=c2w[2];
     float r10=c2w[4],  r11=c2w[5],  r12=c2w[6];
     float r20=c2w[8],  r21=c2w[9],  r22=c2w[10];
+    if (!std::isfinite(r00) || !std::isfinite(r11) || !std::isfinite(r22)) {
+        __android_log_print(ANDROID_LOG_WARN, TAG, "integrate #%d: non-finite rotation matrix, skipping frame", frameCount_);
+        return;
+    }
 
     const float stepSize = voxelSize_ * 0.5f;
     int updatedVoxels = 0;
@@ -108,6 +122,7 @@ void TsdfVolume::integrate(const uint16_t* depthMm, int w, int h,
 
                 BlockKey bk{bx, by, bz};
                 TsdfBlock* block = getOrCreate(bk);
+                if (!block) continue;
                 block->lastTouchedFrame = frameCount_;
                 block->dirty = true;
 
@@ -168,8 +183,9 @@ void TsdfVolume::extractMesh(MeshBuffers& out) {
 }
 
 void TsdfVolume::evictDistantBlocks(float camX, float camY, float camZ) {
-    const float evictRadius2 = 12.0f * 12.0f;
-    const int   evictAge     = 300;
+    const float  evictRadius2 = 12.0f * 12.0f;
+    const int    evictAge     = 300;
+    const size_t maxBlocks    = 50000;  // hard cap for indoor/unbounded scenes
 
     auto it = blocks_.begin();
     while (it != blocks_.end()) {
@@ -179,9 +195,12 @@ void TsdfVolume::evictDistantBlocks(float camX, float camY, float camZ) {
         float bwz = (k.z * BLOCK_SIZE + BLOCK_SIZE * 0.5f) * voxelSize_;
         float dx = bwx - camX, dy = bwy - camY, dz = bwz - camZ;
         float dist2 = dx*dx + dy*dy + dz*dz;
+        int   age   = frameCount_ - it->second->lastTouchedFrame;
 
-        if (dist2 > evictRadius2 &&
-            frameCount_ - it->second->lastTouchedFrame > evictAge) {
+        bool farAndOld   = (dist2 > evictRadius2) && (age > evictAge);
+        bool overBudget  = (blocks_.size() > maxBlocks) && (age > evictAge);
+
+        if (farAndOld || overBudget) {
             meshCache_.erase(k);
             delete it->second;
             it = blocks_.erase(it);
