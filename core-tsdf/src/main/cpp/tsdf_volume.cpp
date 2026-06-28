@@ -74,7 +74,7 @@ void TsdfVolume::integrate(const uint16_t* depthMm, int w, int h,
         return;
     }
 
-    const float stepSize = voxelSize_ * 0.5f;
+    const float stepSize = voxelSize_;  // 1 voxel per step (was 0.5)
     int updatedVoxels = 0;
 
     for (int iv = 0; iv < h; ++iv) {
@@ -100,10 +100,11 @@ void TsdfVolume::integrate(const uint16_t* depthMm, int w, int h,
                 if (sdf < -truncation_) break;  // ray exits truncation band
                 float tsdfVal = std::min(sdf / truncation_, 1.0f);
 
-                // Sample point in camera space
-                float ptX = rayCamX * t;
-                float ptY = rayCamY * t;
-                float ptZ = t;
+                // Sample point in camera space.
+                // ARCore OpenGL convention: camera looks down -Z, so depth along -Z.
+                float ptX =  rayCamX * t;
+                float ptY =  rayCamY * t;
+                float ptZ = -t;
 
                 // Transform to world space
                 float wx = r00*ptX + r10*ptY + r20*ptZ + camPosX;
@@ -198,7 +199,7 @@ void TsdfVolume::evictDistantBlocks(float camX, float camY, float camZ) {
         int   age   = frameCount_ - it->second->lastTouchedFrame;
 
         bool farAndOld   = (dist2 > evictRadius2) && (age > evictAge);
-        bool overBudget  = (blocks_.size() > maxBlocks) && (age > evictAge);
+        bool overBudget  = (blocks_.size() > maxBlocks) && (age > 30);
 
         if (farAndOld || overBudget) {
             meshCache_.erase(k);
