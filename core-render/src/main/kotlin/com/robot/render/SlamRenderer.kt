@@ -28,6 +28,8 @@ class SlamRenderer(
 
     private val backgroundRenderer = BackgroundRenderer()
     private val meshRenderer = MeshRenderer()
+    private val floorCeilingDetector = FloorCeilingDetector()
+    private val floorCeilingRenderer = FloorCeilingRenderer()
 
     private var viewMatrix = FloatArray(16)
     private var projMatrix = FloatArray(16)
@@ -36,6 +38,10 @@ class SlamRenderer(
     @Volatile var planViewEnabled = false
 
     private var lastKnownPos = floatArrayOf(0f, 0f, 0f)
+
+    // Last logged plane heights, to throttle "floor detected" logs to >5 cm changes.
+    private var lastLoggedFloorY: Float? = null
+    private var lastLoggedCeilingY: Float? = null
 
     private var depthSuccessCount = 0
     private var depthFailCount = 0
@@ -51,6 +57,7 @@ class SlamRenderer(
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         val textureId = backgroundRenderer.init()
         meshRenderer.init()
+        floorCeilingRenderer.init()
         sessionManager.setCameraTextureName(textureId)
         onLog("GL surface created texId=$textureId depthMode=${sessionManager.depthModeName}")
     }
@@ -87,6 +94,7 @@ class SlamRenderer(
             GLES30.glClearColor(0.05f, 0.05f, 0.08f, 1f)
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
             meshRenderer.drawPlanView(lastKnownPos)
+            floorCeilingRenderer.draw(planViewMatrix(), planProjMatrix())
             return
         }
 
@@ -117,6 +125,16 @@ class SlamRenderer(
                 }
             }
             if (frameData != null) {
+                // Floor/ceiling detection runs on the GL thread; cheap pure-Kotlin math.
+                floorCeilingDetector.update(frameData)
+                floorCeilingRenderer.updatePlanes(
+                    floorCeilingDetector.floorY,
+                    floorCeilingDetector.ceilingY,
+                    lastKnownPos[0],
+                    lastKnownPos[2],
+                )
+                logPlanesIfChanged()
+
                 depthSuccessCount++
                 val w = frameData.depthWidth
                 val h = frameData.depthHeight
@@ -150,5 +168,41 @@ class SlamRenderer(
         }
 
         meshRenderer.draw(viewMatrix, projMatrix)
+        floorCeilingRenderer.draw(viewMatrix, projMatrix)
+    }
+
+    /** Plan-view camera matrix — mirrors MeshRenderer.drawPlanView. */
+    private fun planViewMatrix(): FloatArray {
+        val view = FloatArray(16)
+        android.opengl.Matrix.setLookAtM(view, 0,
+            0f, 8f, 0f,   // eye directly above grid centre
+            0f, 0f, 0f,   // look at grid centre
+            0f, 0f, -1f,  // north = world −Z
+        )
+        return view
+    }
+
+    /** Plan-view orthographic projection — mirrors MeshRenderer.drawPlanView. */
+    private fun planProjMatrix(): FloatArray {
+        val proj = FloatArray(16)
+        android.opengl.Matrix.orthoM(proj, 0, -3.3f, 3.3f, -3.3f, 3.3f, 0.5f, 16f)
+        return proj
+    }
+
+    /** Emit a log line whenever floor/ceiling Y shifts by more than 5 cm. */
+    private fun logPlanesIfChanged() {
+        val floor = floorCeilingDetector.floorY
+        val ceiling = floorCeilingDetector.ceilingY
+        val floorChanged = floor != null &&
+            (lastLoggedFloorY == null || kotlin.math.abs(floor - lastLoggedFloorY!!) > 0.05f)
+        val ceilingChanged = ceiling != null &&
+            (lastLoggedCeilingY == null || kotlin.math.abs(ceiling - lastLoggedCeilingY!!) > 0.05f)
+        if (floorChanged || ceilingChanged) {
+            lastLoggedFloorY = floor
+            lastLoggedCeilingY = ceiling
+            val f = floor?.let { "%.2f".format(it) } ?: "?"
+            val c = ceiling?.let { "%.2f".format(it) } ?: "?"
+            onLog("floor detected Y=${f}m ceiling=${c}m")
+        }
     }
 }
