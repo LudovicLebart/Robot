@@ -186,7 +186,7 @@ void TsdfVolume::extractMesh(MeshBuffers& out) {
 void TsdfVolume::evictDistantBlocks(float camX, float camY, float camZ) {
     const float  evictRadius2 = 12.0f * 12.0f;
     const int    evictAge     = 300;
-    const size_t maxBlocks    = 50000;  // hard cap for indoor/unbounded scenes
+    const size_t maxBlocks    = 20000;  // ~80 MB TSDF; 3cm voxels cover room in ~2k blocks
 
     auto it = blocks_.begin();
     while (it != blocks_.end()) {
@@ -199,7 +199,7 @@ void TsdfVolume::evictDistantBlocks(float camX, float camY, float camZ) {
         int   age   = frameCount_ - it->second->lastTouchedFrame;
 
         bool farAndOld   = (dist2 > evictRadius2) && (age > evictAge);
-        bool overBudget  = (blocks_.size() > maxBlocks) && (age > 30);
+        bool overBudget  = (blocks_.size() > maxBlocks) && (age > 120);
 
         if (farAndOld || overBudget) {
             meshCache_.erase(k);
