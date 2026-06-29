@@ -30,6 +30,10 @@ class SlamRenderer(
     private val meshRenderer = MeshRenderer()
     private val floorCeilingDetector = FloorCeilingDetector()
     private val floorCeilingRenderer = FloorCeilingRenderer()
+    // Neural Depth back-projection — yellow, high density
+    private val pointCloudRenderer = PointCloudRenderer(floatArrayOf(1f, 0.85f, 0f, 1f), 12_000)
+    // ARCore VIO feature points — cyan, sparse but stable
+    private val vioCloudRenderer   = PointCloudRenderer(floatArrayOf(0f, 1f, 1f, 1f), 500)
 
     private var viewMatrix = FloatArray(16)
     private var projMatrix = FloatArray(16)
@@ -37,6 +41,11 @@ class SlamRenderer(
     @Volatile private var pendingMesh: MeshSnapshot? = null
     @Volatile var planViewEnabled = false
     @Volatile var meshVisible = false
+    @Volatile var pointCloudVisible = false
+    @Volatile var vioCloudVisible = false
+
+    private val ptBuf  = FloatArray(12_000 * 3)  // Neural Depth XYZ scratch
+    private val vioBuf = FloatArray(500 * 3)      // VIO XYZ scratch
 
     private var lastKnownPos = floatArrayOf(0f, 0f, 0f)
 
@@ -59,6 +68,8 @@ class SlamRenderer(
         val textureId = backgroundRenderer.init()
         meshRenderer.init()
         floorCeilingRenderer.init()
+        pointCloudRenderer.init()
+        vioCloudRenderer.init()
         sessionManager.setCameraTextureName(textureId)
         onLog("GL surface created texId=$textureId depthMode=${sessionManager.depthModeName}")
     }
@@ -94,8 +105,11 @@ class SlamRenderer(
             // Dark background — no camera pass-through
             GLES30.glClearColor(0.05f, 0.05f, 0.08f, 1f)
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
+            val pv = planViewMatrix(); val pp = planProjMatrix()
             if (meshVisible) meshRenderer.drawPlanView(lastKnownPos)
-            floorCeilingRenderer.draw(planViewMatrix(), planProjMatrix())
+            if (pointCloudVisible) pointCloudRenderer.draw(pv, pp)
+            if (vioCloudVisible)   vioCloudRenderer.draw(pv, pp)
+            floorCeilingRenderer.draw(pv, pp)
             return
         }
 
@@ -164,11 +178,35 @@ class SlamRenderer(
                     onLog("depth #$depthSuccessCount center=${centerMm}mm valid=${validPct}% " +
                           "pos=(${px.format1}/${py.format1}/${pz.format1})m tsdf=$sent")
                 }
+                if (pointCloudVisible) {
+                    val count = backProjectToWorld(frameData, c2w, ptBuf)
+                    pointCloudRenderer.upload(ptBuf, count)
+                }
+
                 onPoseUpdated(c2w)
             }
         }
 
+        // ARCore VIO feature points — stable, world-anchored, sparse
+        if (vioCloudVisible) {
+            try {
+                frame.acquirePointCloud().use { pc ->
+                    val buf = pc.points  // (x, y, z, confidence) quads
+                    val n = minOf(buf.remaining() / 4, 500)
+                    for (i in 0 until n) {
+                        vioBuf[i * 3]     = buf.get()
+                        vioBuf[i * 3 + 1] = buf.get()
+                        vioBuf[i * 3 + 2] = buf.get()
+                        buf.get()  // skip confidence
+                    }
+                    vioCloudRenderer.upload(vioBuf, n)
+                }
+            } catch (_: Exception) { /* PointCloud not available this frame */ }
+        }
+
         if (meshVisible) meshRenderer.draw(viewMatrix, projMatrix)
+        if (pointCloudVisible) pointCloudRenderer.draw(viewMatrix, projMatrix)
+        if (vioCloudVisible)   vioCloudRenderer.draw(viewMatrix, projMatrix)
         floorCeilingRenderer.draw(viewMatrix, projMatrix)
     }
 
@@ -188,6 +226,44 @@ class SlamRenderer(
         val proj = FloatArray(16)
         android.opengl.Matrix.orthoM(proj, 0, -3.3f, 3.3f, -3.3f, 3.3f, 0.5f, 16f)
         return proj
+    }
+
+    /**
+     * Back-project subsampled depth pixels to world XYZ (stride=2).
+     * Column-major c2w: world = R*cam + t where col0=[c2w[0..2]], col1=[c2w[4..6]], etc.
+     */
+    private fun backProjectToWorld(frame: com.robot.common.FrameData, c2w: FloatArray, out: FloatArray): Int {
+        val w = frame.depthWidth; val h = frame.depthHeight
+        val fx = frame.fx; val fy = frame.fy; val cx = frame.cx; val cy = frame.cy
+        val depth = frame.depthValues
+        val r00=c2w[0]; val r10=c2w[4]; val r20=c2w[8]
+        val r01=c2w[1]; val r11=c2w[5]; val r21=c2w[9]
+        val r02=c2w[2]; val r12=c2w[6]; val r22=c2w[10]
+        val tx=c2w[12]; val ty=c2w[13]; val tz=c2w[14]
+        var n = 0
+        var v = 0
+        while (v < h) {
+            var u = 0
+            while (u < w) {
+                val raw = depth[v * w + u].toInt() and 0xFFFF
+                if (raw != 0) {
+                    val d = raw / 1000f
+                    if (d in 0.3f..8.0f) {
+                        val camX = (u - cx) / fx * d
+                        val camY = -(v - cy) / fy * d
+                        val camZ = -d
+                        out[n * 3]     = r00*camX + r10*camY + r20*camZ + tx
+                        out[n * 3 + 1] = r01*camX + r11*camY + r21*camZ + ty
+                        out[n * 3 + 2] = r02*camX + r12*camY + r22*camZ + tz
+                        n++
+                        if (n >= 12_000) return n
+                    }
+                }
+                u += 2
+            }
+            v += 2
+        }
+        return n
     }
 
     /** Emit a log line whenever floor/ceiling Y shifts by more than 5 cm. */

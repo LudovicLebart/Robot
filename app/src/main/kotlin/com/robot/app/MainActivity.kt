@@ -41,6 +41,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var btnSave: Button
     private var logVisible = false
     private var meshVisible = false
+    private var pointCloudVisible = false
+    private var vioCloudVisible = false
 
     private val cameraPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -108,6 +110,26 @@ class MainActivity : ComponentActivity() {
         }
         btnMesh.post { btnMesh.setBackgroundColor(Color.argb(220, 80, 0, 0)) } // hidden by default
 
+        lateinit var btnPts: Button
+        btnPts = makeButton("PTS") {
+            pointCloudVisible = !pointCloudVisible
+            renderer.pointCloudVisible = pointCloudVisible
+            btnPts.setBackgroundColor(
+                if (pointCloudVisible) Color.argb(220, 160, 120, 0)
+                else Color.argb(180, 0, 0, 80)
+            )
+        }
+
+        lateinit var btnVio: Button
+        btnVio = makeButton("VIO") {
+            vioCloudVisible = !vioCloudVisible
+            renderer.vioCloudVisible = vioCloudVisible
+            btnVio.setBackgroundColor(
+                if (vioCloudVisible) Color.argb(220, 0, 180, 180)
+                else Color.argb(180, 0, 0, 80)
+            )
+        }
+
         btnSave = makeButton("SAVE") {
             btnSave.isEnabled = false
             viewModel.saveMesh { path ->
@@ -123,6 +145,8 @@ class MainActivity : ComponentActivity() {
             addView(btnLog,  LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
             addView(btnPlan, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
             addView(btnMesh, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
+            addView(btnPts,  LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
+            addView(btnVio,  LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
             addView(btnSave, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
         }
 
