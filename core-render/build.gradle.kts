@@ -21,7 +21,6 @@ dependencies {
     implementation(project(":core-common"))
     implementation(project(":core-slam"))
     implementation(project(":core-depth"))
-    implementation(project(":core-tsdf"))
     implementation(project(":core-nav"))
     implementation(libs.arcore)
     implementation(libs.kotlinx.coroutines.android)

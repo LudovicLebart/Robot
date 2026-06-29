@@ -5,15 +5,24 @@ Lis-le pour comprendre *pourquoi*, pas pour savoir *comment faire*.
 
 ---
 
-## Pourquoi ARCore sans LiDAR ?
+## Rôle d'ARCore dans le pipeline
 
-Le Pixel 9 n'a pas de LiDAR. ARCore compense avec deux sources :
+Le Pixel 9 n'a pas de LiDAR. ARCore fournit deux sources complémentaires :
 
-- **Visual-Inertial Odometry (VIO)** : fusion caméra RGB + IMU → pose 6-DoF précise à ~1 cm
-- **Raw Depth API** : depth map dense reconstruite par stéréo et ML, résolution ~320×240
+- **Visual-Inertial Odometry (VIO)** : fusion caméra RGB + IMU → pose 6-DoF précise à ~1 cm. C'est la source de localisation principale du robot.
+- **Raw Depth API** : depth map dense (~320×240) par stéréo + ML, utilisée pour détecter le sol/plafond (`FloorCeilingDetector`) et les sécurités verticales.
 
-Cette combinaison suffit pour cartographier l'intérieur d'une maison à quelques centimètres près.  
-La Raw Depth API donne des valeurs `uint16_t` en millimètres, `0` = pas de donnée.
+Le **LiDAR 2D** embarqué sur la base du robot (géré par l'ESP32) est la source de géométrie d'obstacles, pas ARCore. ARCore donne la pose ; le LiDAR donne la carte.
+
+### Pourquoi le nuage VIO ne suffit pas pour reconstruire des surfaces
+
+Le nuage VIO (~10 000 features visuels stables) est fondamentalement inadapté pour générer un maillage de l'environnement :
+
+- **Densité insuffisante** : ~10 000 points sur une pièce de 5×5×3 m ≈ 1 point tous les 8 cm². Un maillage exploitable en a besoin d'au moins 10× plus.
+- **Pas de normales** : les features ARCore sont des points 3D sans orientation de surface. Les algorithmes de maillage (Poisson, Ball Pivoting) en ont besoin.
+- **Couverture non uniforme** : les murs lisses/uniformes ont 0 point VIO (pas de texture à tracker). Résultat : trous énormes sur les murs, et des triangles géants traversant l'air entre surfaces éloignées.
+
+Le LiDAR 2D + voxel sweeping est la bonne source pour la géométrie navigable.
 
 ---
 
@@ -26,27 +35,24 @@ Trois threads coexistent sans mutex explicite :
 │  GL Thread (Android GLSurfaceView)      │
 │  • session.update() → Frame             │
 │  • Extrait Pose + depth map             │
-│  • Construit FrameData (immutable)      │
-│  • frameChannel.trySend(frameData)      │  ← CONFLATED : perd l'ancienne si busy
-│  • Lit @Volatile pendingMesh            │
-│  • Rend fond caméra + mesh overlay      │
+│  • Accumule nuage VIO stable            │
+│  • snapshotChannel.trySend(pts)         │  ← CONFLATED : perd l'ancienne si busy
+│  • Lit @Volatile pendingPlanes          │
+│  • Rend fond caméra + nuage + grilles   │
 └──────────────┬──────────────────────────┘
                │ Channel(CONFLATED)
                ▼
 ┌─────────────────────────────────────────┐
-│  TSDF Dispatcher (Dispatchers.Default)  │
-│  • nativeIntegrate() → C++ JNI          │
-│  • Toutes les 30 frames :               │
-│    nativeExtractMesh() → FloatArray     │
-│    → MeshSnapshot (direct ByteBuffers)  │
-│    → StateFlow<MeshSnapshot>            │
+│  Plane Dispatcher (Dispatchers.Default) │
+│  • PlaneExtractor.extract() RANSAC      │
+│  • PlaneStabilizer.update() EMA         │
+│  • planesFlow (StateFlow)               │
 └──────────────┬──────────────────────────┘
                │ StateFlow
                ▼
 ┌─────────────────────────────────────────┐
-│  GL Thread (collecte dans SlamRenderer) │
-│  • @Volatile pendingMesh mis à jour     │
-│  • uploadMesh() sur GL thread           │
+│  Main Thread (MainActivity)             │
+│  • planesFlow.collect → pendingPlanes   │
 └─────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────┐
@@ -54,7 +60,6 @@ Trois threads coexistent sans mutex explicite :
 │  • WebSocket OkHttp → ESP32             │
 │  • IrReading → SharedFlow              │
 │  • VerticalSafetyMonitor → StateFlow    │
-│  • N'interagit jamais avec la TSDF      │
 └─────────────────────────────────────────┘
 ```
 
@@ -115,9 +120,7 @@ Le cycle de vie ARCore est couplé au cycle de vie de l'Activity :
 ```
 onResume  → ArSessionManager.resume()   → session.resume()
 onPause   → ArSessionManager.pause()    → session.pause()
-onDestroy → SlamViewModel.onCleared()   → tsdfVolume.close()
-                                          frameChannel.close()
-                                          processLoop() finally → nativeDestroy(handle)
+onDestroy → SlamViewModel.onCleared()   → snapshotChannel.close()
+                                          esp32Client.close()
+                                          sessionManager.close()
 ```
-
-`nativeDestroy` n'est jamais appelé depuis le main thread : il est dans le `finally` de `processLoop` qui tourne sur `Dispatchers.Default`. Cela garantit qu'il s'exécute après le dernier `nativeIntegrate`, évitant le use-after-free.

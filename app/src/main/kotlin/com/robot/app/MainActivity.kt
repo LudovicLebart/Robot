@@ -27,6 +27,7 @@ import com.robot.render.SlamRenderer
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -39,9 +40,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var btnLog: Button
     private lateinit var btnPlan: Button
     private lateinit var btnSave: Button
-    private var logVisible = false
-    private var meshVisible = false
-    private var vioCloudVisible = false
+    private var logVisible         = false
+    private var vioCloudVisible    = false
     private var stableCloudVisible = false
 
     private val cameraPermissionLauncher = registerForActivityResult(
@@ -60,11 +60,10 @@ class MainActivity : ComponentActivity() {
         glView = SlamGLSurfaceView(this)
 
         renderer = SlamRenderer(
-            sessionManager  = viewModel.sessionManager,
-            tsdfVolume      = viewModel.tsdfVolume,
-            vioAccumulator  = viewModel.vioAccumulator,
+            sessionManager     = viewModel.sessionManager,
+            vioAccumulator     = viewModel.vioAccumulator,
             getDisplayRotation = { display?.rotation ?: Surface.ROTATION_0 },
-            onLog           = { msg -> OverlayLogger.log(msg) },
+            onLog              = { msg -> OverlayLogger.log(msg) },
         )
         glView.setRenderer(renderer)
 
@@ -81,7 +80,8 @@ class MainActivity : ComponentActivity() {
             visibility = android.view.View.GONE
         }
 
-        // ── Buttons ──────────────────────────────────────────────────────────
+        // ── Buttons ─────────────────────────────────────────────────────────
+        // Order: LOG | PLAN | VIO | MAP | SAVE
         btnLog = makeButton("LOG") {
             logVisible = !logVisible
             logScrollView.visibility =
@@ -99,17 +99,6 @@ class MainActivity : ComponentActivity() {
             }
             OverlayLogger.log(if (next) "Plan view ON" else "Plan view OFF (AR mode)")
         }
-
-        lateinit var btnMesh: Button
-        btnMesh = makeButton("MESH") {
-            meshVisible = !meshVisible
-            renderer.meshVisible = meshVisible
-            btnMesh.setBackgroundColor(
-                if (meshVisible) AppConfig.BTN_DEFAULT_BG_COLOR
-                else AppConfig.BTN_MESH_HIDDEN_COLOR
-            )
-        }
-        btnMesh.post { btnMesh.setBackgroundColor(AppConfig.BTN_MESH_HIDDEN_COLOR) }
 
         lateinit var btnVio: Button
         btnVio = makeButton("VIO") {
@@ -132,19 +121,14 @@ class MainActivity : ComponentActivity() {
         }
 
         btnSave = makeButton("SAVE") {
-            btnSave.isEnabled = false
-            viewModel.saveMesh { path ->
-                btnSave.isEnabled = true
-                Toast.makeText(this, "adb pull \"$path\"", Toast.LENGTH_LONG).show()
-            }
+            OverlayLogger.log("SAVE: no mesh — use adb pull for VIO map data")
         }
 
         val buttonRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            addView(btnLog,  LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
-            addView(btnPlan, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
-            addView(btnMesh, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
-            addView(btnVio,  LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
+            addView(btnLog,    LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
+            addView(btnPlan,   LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
+            addView(btnVio,    LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
             addView(btnMap,  LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.marginEnd = 8 })
             addView(btnSave, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
         }
@@ -166,10 +150,6 @@ class MainActivity : ComponentActivity() {
         OverlayLogger.text.onEach { text ->
             logTextView.text = text
             if (logVisible) logScrollView.post { logScrollView.fullScroll(ScrollView.FOCUS_DOWN) }
-        }.launchIn(lifecycleScope)
-
-        viewModel.tsdfVolume.mesh.onEach { snap ->
-            renderer.onMeshSnapshot(snap)
         }.launchIn(lifecycleScope)
 
         viewModel.sessionState.onEach { state ->

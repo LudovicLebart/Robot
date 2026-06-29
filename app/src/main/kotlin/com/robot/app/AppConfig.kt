@@ -18,9 +18,6 @@ object AppConfig {
     /** PLAN button active background color. */
     val BTN_PLAN_ACTIVE_COLOR = Color.argb(220, 0, 100, 0)
 
-    /** MESH button hidden-state background color. */
-    val BTN_MESH_HIDDEN_COLOR = Color.argb(220, 80, 0, 0)
-
     /** VIO button active background color (cyan). */
     val BTN_VIO_ACTIVE_COLOR = Color.argb(220, 0, 180, 180)
 

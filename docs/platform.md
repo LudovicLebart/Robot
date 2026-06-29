@@ -75,10 +75,23 @@ Pour garantir des performances temps réel, le logiciel est structuré en **troi
 
 Cette couche transforme les données brutes des capteurs en informations utilisables.
 
-**Moteur SLAM**
-- Fusionne LiDAR 2D, IR et IMU du téléphone
-- Génère une carte de l'environnement par itérations successives
-- Maintient les coordonnées exactes du robot (x, y, θ) dans cet espace
+**SLAM et Modélisation 3D**
+
+| Composant | Source | Rôle |
+|---|---|---|
+| Localisation (SLAM) | ARCore (Pixel 9) — caméra + IMU | Pose 6-DoF précise (~1 cm) |
+| Géométrie obstacles | LiDAR 2D (ESP32) — balayage horizontal | Tranche 2D à hauteur robot |
+| Fusion 3D (Sweeping) | LiDAR 2D × Pose ARCore | Projection des lignes successives en volume 3D |
+
+**Pipeline de fusion :** le LiDAR 2D balaie en continu un plan horizontal à hauteur de base. Le déplacement du robot transforme les lignes successives en volume dans une grille de voxels. La pose 6-DoF fournie par ARCore permet de projeter chaque point LiDAR dans l'espace monde avec sa position et orientation réelles.
+
+> **Limites du nuage VIO pour la reconstruction de surface :** le nuage de points VIO d'ARCore (~10 000 features visuels stables) est trop épars et manque de normales de surface pour générer un maillage exploitable. Les algorithmes classiques (Poisson, Ball Pivoting) produiraient des trous énormes sur les murs lisses (pas de texture → 0 point) et des triangles géants traversant l'air entre surfaces éloignées. Le LiDAR 2D est la source correcte pour la géométrie d'obstacles.
+
+**Reconnaissance d'Objets et Cartographie Sémantique**
+
+- **Modèle Unifié (YOLO) :** inférence sur le flux vidéo du Pixel 9 pour identifier humains, meubles et obstacles dynamiques (chaussures, câbles, chaises déplacées)
+- **Nettoyage de la carte 2D :** la détection d'objets et la carte 3D dynamique servent à filtrer la carte 2D statique (A*) pour n'y conserver que les structures permanentes (murs réels). Un fauteuil détecté comme meuble n'est pas gravé dans la carte statique.
+- **Persistance et classification :** distinction entre objets fixes (canapé, table) et mobiles pour adapter la navigation à long terme.
 
 **Module de Vision Supervisée**
 - Modèle d'inférence léger sur le Tensor Core (ex: MediaPipe)

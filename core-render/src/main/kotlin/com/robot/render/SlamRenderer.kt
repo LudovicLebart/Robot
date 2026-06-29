@@ -3,82 +3,87 @@ package com.robot.render
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
 import com.google.ar.core.TrackingState
-import com.robot.common.MeshSnapshot
 import com.robot.depth.DepthFrameProvider
 import com.robot.nav.VioMapAccumulator
 import com.robot.nav.VioMapConfig
 import com.robot.slam.ArSessionManager
 import com.robot.slam.PoseExtractor
-import com.robot.tsdf.TsdfVolume
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
 /**
- * Central GL thread.
- * - Calls session.update() once per frame.
- * - AR mode: renders camera background + TSDF mesh.
- * - Plan mode: renders TSDF mesh from above with orthographic projection.
- * - Publishes FrameData to the TSDF channel (CONFLATED — never blocks).
+ * Central GL thread renderer.
+ * - AR mode: camera background + VIO clouds + surface planes + floor/ceiling grid.
+ * - Plan mode: overhead orthographic view of the same elements.
+ *
+ * Every [VioMapConfig.EVICT_INTERVAL_FRAMES] VIO frames, a stride-3 snapshot of the stable
+ * point cloud is sent to [snapshotChannel] for async RANSAC plane extraction on Dispatchers.Default.
+ * Detected planes arrive back via [pendingPlanes] (set from the main thread) and are uploaded
+ * then drawn on the GL thread.
  */
 class SlamRenderer(
     private val sessionManager: ArSessionManager,
-    private val tsdfVolume: TsdfVolume,
     private val vioAccumulator: VioMapAccumulator,
     private val getDisplayRotation: () -> Int,
     private val onPoseUpdated: (FloatArray) -> Unit = {},
     private val onLog: (String) -> Unit = {},
 ) : GLSurfaceView.Renderer {
 
-    private val backgroundRenderer = BackgroundRenderer()
-    private val meshRenderer = MeshRenderer()
-    private val floorCeilingDetector = FloorCeilingDetector()
-    private val floorCeilingRenderer = FloorCeilingRenderer()
-    // ARCore VIO feature points — cyan, sparse but stable
-    private val vioCloudRenderer = PointCloudRenderer(
+    private val backgroundRenderer    = BackgroundRenderer()
+    private val floorCeilingDetector  = FloorCeilingDetector()
+    private val floorCeilingRenderer  = FloorCeilingRenderer()
+    private val robotMarkerRenderer   = RobotMarkerRenderer()
+    private val vioCloudRenderer      = PointCloudRenderer(
         floatArrayOf(RenderConfig.VIO_CLOUD_COLOR_R, RenderConfig.VIO_CLOUD_COLOR_G,
                      RenderConfig.VIO_CLOUD_COLOR_B, RenderConfig.VIO_CLOUD_COLOR_A),
         RenderConfig.VIO_CLOUD_MAX_POINTS,
     )
-    // Accumulated stable structural points — color by height, size by weight
-    private val stableMapRenderer = StableMapRenderer()
+    private val stableMapRenderer     = StableMapRenderer()
 
     private var viewMatrix = FloatArray(16)
     private var projMatrix = FloatArray(16)
 
-    @Volatile private var pendingMesh: MeshSnapshot? = null
-    @Volatile var planViewEnabled = false
-    @Volatile var meshVisible = false
-    @Volatile var vioCloudVisible = false
+    @Volatile var planViewEnabled    = false
+    @Volatile var vioCloudVisible    = false
     @Volatile var stableCloudVisible = false
 
-    private val vioBuf    = FloatArray(RenderConfig.VIO_CLOUD_MAX_POINTS * 3)
-    private val vioIds    = IntArray(RenderConfig.VIO_CLOUD_MAX_POINTS)
-    private val vioConfs  = FloatArray(RenderConfig.VIO_CLOUD_MAX_POINTS)
-    private val stableBuf = FloatArray(VioMapConfig.MAX_STABLE_POINTS * 4)
+    // Plan view pan/zoom — written from the UI thread (touch events), read on GL thread.
+    @Volatile var planPanX  = 0f
+    @Volatile var planPanZ  = 0f
+    @Volatile var planScale = 1f
+
+    private val vioBuf      = FloatArray(RenderConfig.VIO_CLOUD_MAX_POINTS * 3)
+    private val vioIds      = IntArray(RenderConfig.VIO_CLOUD_MAX_POINTS)
+    private val vioConfs    = FloatArray(RenderConfig.VIO_CLOUD_MAX_POINTS)
+    private val stableBuf   = FloatArray(VioMapConfig.MAX_STABLE_POINTS * 4)
 
     private var vioFrameCount = 0
+    private var viewportW = 1
+    private var viewportH = 1
 
-    private var lastKnownPos = floatArrayOf(0f, 0f, 0f)
+    private var lastKnownPos      = floatArrayOf(0f, 0f, 0f)
+    private var lastKnownForwardX = 0f    // horizontal camera-forward components
+    private var lastKnownForwardZ = -1f   // default: facing -Z
+    private var hasValidPose      = false
 
-    // Last logged plane heights, to throttle "floor detected" logs to >5 cm changes.
-    private var lastLoggedFloorY: Float? = null
+    /** Floor Y estimated from camera height (stable). Ceiling still comes from the depth detector. */
+    private val computedFloorY: Float
+        get() = if (hasValidPose) lastKnownPos[1] - RenderConfig.PHONE_HAND_HEIGHT_M
+                else floorCeilingDetector.floorY ?: RenderConfig.FALLBACK_FLOOR_Y_M
+
+    private var lastLoggedFloorY: Float?   = null
     private var lastLoggedCeilingY: Float? = null
 
     private var depthSuccessCount = 0
-    private var depthFailCount = 0
+    private var depthFailCount    = 0
     private var lastTrackingState: TrackingState? = null
 
     private val Float.format1 get() = "%.1f".format(this)
 
-    fun onMeshSnapshot(snap: MeshSnapshot) {
-        pendingMesh = snap
-        onLog("mesh ready: ${snap.vertexCount} verts (pending GL upload)")
-    }
-
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         val textureId = backgroundRenderer.init()
-        meshRenderer.init()
         floorCeilingRenderer.init()
+        robotMarkerRenderer.init()
         vioCloudRenderer.init()
         stableMapRenderer.init()
         sessionManager.setCameraTextureName(textureId)
@@ -87,6 +92,8 @@ class SlamRenderer(
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         GLES30.glViewport(0, 0, width, height)
+        viewportW = width
+        viewportH = height
         val rotation = getDisplayRotation()
         sessionManager.setDisplayGeometry(rotation, width, height)
         onLog("GL surface ${width}x${height} rot=$rotation")
@@ -97,32 +104,20 @@ class SlamRenderer(
 
         val frame = sessionManager.update() ?: return
 
-        if (frame.hasDisplayGeometryChanged()) {
-            onLog("display geometry changed")
-        }
+        if (frame.hasDisplayGeometryChanged()) onLog("display geometry changed")
 
-        // Keep camera UVs current regardless of render mode — fixes stale UVs after
-        // rotating the device while plan view is active.
         backgroundRenderer.updateUVsIfNeeded(frame)
 
-        // Upload any pending mesh regardless of view mode
-        pendingMesh?.let { snap ->
-            meshRenderer.uploadMesh(snap)
-            pendingMesh = null
-            onLog("GL: mesh uploaded ${snap.vertexCount} verts")
-        }
-
         if (planViewEnabled) {
-            // Dark background — no camera pass-through
             GLES30.glClearColor(RenderConfig.PLAN_BG_R, RenderConfig.PLAN_BG_G, RenderConfig.PLAN_BG_B, 1f)
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
             val pv = planViewMatrix(); val pp = planProjMatrix()
-            if (meshVisible)       meshRenderer.drawPlanView(lastKnownPos)
-            if (vioCloudVisible)   vioCloudRenderer.draw(pv, pp)
-            if (stableCloudVisible) stableMapRenderer.draw(pv, pp,
-                floorCeilingDetector.floorY ?: RenderConfig.FALLBACK_FLOOR_Y_M,
+            if (vioCloudVisible)     vioCloudRenderer.draw(pv, pp)
+            if (stableCloudVisible)  stableMapRenderer.draw(pv, pp,
+                computedFloorY,
                 floorCeilingDetector.ceilingY ?: RenderConfig.FALLBACK_CEILING_Y_M)
             floorCeilingRenderer.draw(pv, pp)
+            robotMarkerRenderer.draw(pv, pp)
             return
         }
 
@@ -145,6 +140,10 @@ class SlamRenderer(
             lastKnownPos[0] = c2w[12]
             lastKnownPos[1] = c2w[13]
             lastKnownPos[2] = c2w[14]
+            // Camera forward in world = -col2 of c2w (column-major: col2 = indices 8,9,10)
+            lastKnownForwardX = -c2w[8]
+            lastKnownForwardZ = -c2w[10]
+            hasValidPose = true
 
             val frameData = DepthFrameProvider.extract(frame, c2w) { err ->
                 depthFailCount++
@@ -153,54 +152,44 @@ class SlamRenderer(
                 }
             }
             if (frameData != null) {
-                // Floor/ceiling detection runs on the GL thread; cheap pure-Kotlin math.
                 floorCeilingDetector.update(frameData)
                 floorCeilingRenderer.updatePlanes(
-                    floorCeilingDetector.floorY,
+                    computedFloorY,
                     floorCeilingDetector.ceilingY,
                     lastKnownPos[0],
                     lastKnownPos[2],
                 )
+                robotMarkerRenderer.update(
+                    lastKnownPos[0], lastKnownPos[2],
+                    lastKnownForwardX, lastKnownForwardZ,
+                    computedFloorY,
+                )
                 logPlanesIfChanged()
 
                 depthSuccessCount++
-                val w = frameData.depthWidth
-                val h = frameData.depthHeight
-                val total = w * h
-                // True image-centre pixel (row=h/2, col=w/2)
-                val centerIdx = (h / 2) * w + (w / 2)
-                val centerMm = frameData.depthValues[centerIdx].toInt() and 0xFFFF
-                val validCount = frameData.depthValues.count { it.toInt() != 0 }
-                val validPct = validCount * 100 / total
-
-                // Skip frames where almost no pixels survived the confidence filter —
-                // they add negligible TSDF signal but consume pipeline time.
-                val sent = if (validPct >= RenderConfig.MIN_VALID_DEPTH_PCT) {
-                    tsdfVolume.frameChannel.trySend(frameData).isSuccess
-                } else {
-                    false
-                }
+                val w = frameData.depthWidth; val h = frameData.depthHeight
+                val centerMm = frameData.depthValues[(h/2)*w + w/2].toInt() and 0xFFFF
+                val validPct = frameData.depthValues.count { it.toInt() != 0 } * 100 / (w * h)
 
                 if (depthSuccessCount == 1 || depthSuccessCount % RenderConfig.LOG_THROTTLE_FRAMES == 0) {
                     val px = c2w[12]; val py = c2w[13]; val pz = c2w[14]
                     if (depthSuccessCount == 1) {
-                        onLog("depth FIRST ${w}x${h} " +
-                              "fx=${frameData.fx.toInt()} fy=${frameData.fy.toInt()} " +
+                        onLog("depth FIRST ${w}x${h} fx=${frameData.fx.toInt()} fy=${frameData.fy.toInt()} " +
                               "cx=${frameData.cx.toInt()} cy=${frameData.cy.toInt()}")
                     }
                     onLog("depth #$depthSuccessCount center=${centerMm}mm valid=${validPct}% " +
-                          "pos=(${px.format1}/${py.format1}/${pz.format1})m tsdf=$sent")
+                          "pos=(${px.format1}/${py.format1}/${pz.format1})m")
                 }
                 onPoseUpdated(c2w)
             }
         }
 
-        // ARCore VIO feature points — always acquire for accumulation, render conditionally
+        // ARCore VIO feature points — always accumulate, render conditionally.
         try {
             frame.acquirePointCloud().use { pc ->
-                val buf   = pc.points  // (x, y, z, confidence) quads
-                val idBuf = pc.ids     // point IDs, parallel to buf
-                val n = minOf(buf.remaining() / 4, 500)
+                val buf   = pc.points
+                val idBuf = pc.ids
+                val n = minOf(buf.remaining() / 4, RenderConfig.VIO_CLOUD_MAX_POINTS)
                 for (i in 0 until n) {
                     vioBuf[i * 3]     = buf.get()
                     vioBuf[i * 3 + 1] = buf.get()
@@ -211,7 +200,7 @@ class SlamRenderer(
                 vioAccumulator.update(vioBuf, vioIds, vioConfs, n)
                 vioFrameCount++
                 if (vioFrameCount % RenderConfig.LOG_THROTTLE_FRAMES == 0) {
-                    onLog("VIO map: total=${vioAccumulator.totalCount()} stable=${vioAccumulator.stableCount()} pts=$n")
+                    onLog("VIO map: total=${vioAccumulator.totalCount()} stable=${vioAccumulator.stableCount()} pts=$n demoted/cycle=${vioAccumulator.demotionCount()}")
                 }
                 if (vioCloudVisible) vioCloudRenderer.upload(vioBuf, n)
                 if (stableCloudVisible) {
@@ -221,20 +210,18 @@ class SlamRenderer(
             }
         } catch (_: Exception) { /* PointCloud not available this frame */ }
 
-        if (meshVisible)        meshRenderer.draw(viewMatrix, projMatrix)
-        if (vioCloudVisible)    vioCloudRenderer.draw(viewMatrix, projMatrix)
-        if (stableCloudVisible) stableMapRenderer.draw(viewMatrix, projMatrix,
-            floorCeilingDetector.floorY ?: RenderConfig.FALLBACK_FLOOR_Y_M,
+        if (vioCloudVisible)     vioCloudRenderer.draw(viewMatrix, projMatrix)
+        if (stableCloudVisible)  stableMapRenderer.draw(viewMatrix, projMatrix,
+            computedFloorY,
             floorCeilingDetector.ceilingY ?: RenderConfig.FALLBACK_CEILING_Y_M)
         floorCeilingRenderer.draw(viewMatrix, projMatrix)
     }
 
-    /** Plan-view camera matrix — mirrors MeshRenderer.drawPlanView. */
     private fun planViewMatrix(): FloatArray {
         val view = FloatArray(16)
         android.opengl.Matrix.setLookAtM(view, 0,
-            0f, RenderConfig.PLAN_VIEW_EYE_HEIGHT_M, 0f,
-            0f, 0f, 0f,
+            planPanX, RenderConfig.PLAN_VIEW_EYE_HEIGHT_M, planPanZ,
+            planPanX, 0f, planPanZ,
             0f, 0f, -1f,
         )
         return view
@@ -242,26 +229,25 @@ class SlamRenderer(
 
     private fun planProjMatrix(): FloatArray {
         val proj = FloatArray(16)
-        val h = RenderConfig.PLAN_VIEW_ORTHO_HALF_EXTENT_M
-        android.opengl.Matrix.orthoM(proj, 0, -h, h, -h, h,
+        val hZ = RenderConfig.PLAN_VIEW_ORTHO_HALF_EXTENT_M / planScale
+        val hX = hZ * viewportW.toFloat() / viewportH.toFloat()
+        android.opengl.Matrix.orthoM(proj, 0, -hX, hX, -hZ, hZ,
             RenderConfig.PLAN_VIEW_NEAR_M, RenderConfig.PLAN_VIEW_FAR_M)
         return proj
     }
 
-    /** Emit a log line whenever floor/ceiling Y shifts by more than 5 cm. */
     private fun logPlanesIfChanged() {
-        val floor = floorCeilingDetector.floorY
+        val floor   = computedFloorY
         val ceiling = floorCeilingDetector.ceilingY
-        val floorChanged = floor != null &&
-            (lastLoggedFloorY == null || kotlin.math.abs(floor - lastLoggedFloorY!!) > RenderConfig.PLANE_LOG_THRESHOLD_M)
+        val floorChanged = lastLoggedFloorY == null ||
+            kotlin.math.abs(floor - lastLoggedFloorY!!) > RenderConfig.PLANE_LOG_THRESHOLD_M
         val ceilingChanged = ceiling != null &&
             (lastLoggedCeilingY == null || kotlin.math.abs(ceiling - lastLoggedCeilingY!!) > RenderConfig.PLANE_LOG_THRESHOLD_M)
         if (floorChanged || ceilingChanged) {
-            lastLoggedFloorY = floor
+            lastLoggedFloorY   = floor
             lastLoggedCeilingY = ceiling
-            val f = floor?.let { "%.2f".format(it) } ?: "?"
             val c = ceiling?.let { "%.2f".format(it) } ?: "?"
-            onLog("floor detected Y=${f}m ceiling=${c}m")
+            onLog("floor(cam)=${"%.2f".format(floor)}m ceiling(det)=${c}m")
         }
     }
 }

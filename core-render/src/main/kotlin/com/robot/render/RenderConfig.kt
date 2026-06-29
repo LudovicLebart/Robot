@@ -36,15 +36,6 @@ object RenderConfig {
     const val POINT_CLOUD_SIZE_MIN_PX = 2.0f
     const val POINT_CLOUD_SIZE_MAX_PX = 12.0f
 
-    // ── Mesh tints (MeshRenderer) ─────────────────────────────────────────────
-    const val MESH_AR_TINT_R   = 0.3f
-    const val MESH_AR_TINT_G   = 0.9f
-    const val MESH_AR_TINT_B   = 0.6f
-    const val MESH_PLAN_TINT_R = 0.2f
-    const val MESH_PLAN_TINT_G = 1.0f
-    const val MESH_PLAN_TINT_B = 0.4f
-    const val MESH_MIN_DIFFUSE = 0.15f   // ambient floor in fragment shader
-
     // ── Floor/ceiling grid (FloorCeilingRenderer) ────────────────────────────
     const val GRID_HALF_EXTENT_M  = 5.0f
     const val GRID_STEP_M         = 0.5f
@@ -65,6 +56,22 @@ object RenderConfig {
     const val DETECTOR_EMA_ALPHA        = 0.1f
     const val DETECTOR_PIXEL_STRIDE     = 4
 
+    // ── Phone physical constants ─────────────────────────────────────────────
+    /** Approximate height of the phone above the floor when held in hand. */
+    const val PHONE_HAND_HEIGHT_M = 1.40f
+
+    // ── Robot position marker (plan view) ────────────────────────────────────
+    const val ROBOT_MARKER_RADIUS_M       = 0.30f   // arrow half-size in world metres
+    const val ROBOT_MARKER_FLOOR_OFFSET_M = 0.03f   // hover above floor grid
+    const val ROBOT_MARKER_COLOR_R        = 1.0f
+    const val ROBOT_MARKER_COLOR_G        = 0.9f
+    const val ROBOT_MARKER_COLOR_B        = 0.0f    // bright yellow
+    const val ROBOT_MARKER_COLOR_A        = 1.0f
+
+    // ── Plan view pan/zoom limits ─────────────────────────────────────────────
+    const val PLAN_VIEW_SCALE_MIN = 0.25f
+    const val PLAN_VIEW_SCALE_MAX = 8.0f
+
     // ── SlamRenderer misc ────────────────────────────────────────────────────
     const val LOG_THROTTLE_FRAMES   = 90        // ~3 s at 30 fps
     const val MIN_VALID_DEPTH_PCT   = 5         // skip frames with less than 5 % valid pixels
@@ -76,4 +83,5 @@ object RenderConfig {
     // ── Fallbacks (until FloorCeilingDetector converges) ────────────────────
     const val FALLBACK_FLOOR_Y_M   = 0.0f
     const val FALLBACK_CEILING_Y_M = 2.5f
+
 }

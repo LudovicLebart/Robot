@@ -11,12 +11,13 @@ Robot/
 ├── app/                    UI, lifecycle, câblage ViewModel + Hilt
 ├── core-common/            Types partagés entre tous les modules
 ├── core-slam/              Session ARCore, extraction pose 6-DoF
-├── core-depth/             ARCore Depth API, extraction depth map
-├── core-tsdf/              Volume TSDF + JNI C++ + Marching Cubes
-│   └── src/main/cpp/       C++17 : tsdf_volume, marching_cubes, jni_bridge
-├── core-render/            OpenGL ES 3.0 : fond caméra + mesh overlay
+├── core-depth/             ARCore Depth API, extraction depth map + FloorCeilingDetector
+├── core-nav/               VioMapAccumulator, VioMapConfig — carte structurelle VIO
+├── core-render/            OpenGL ES 3.0 : fond caméra, nuage stable, grilles, marqueur robot
 └── core-net/               Client WebSocket OkHttp + sécurité IR
 ```
+
+> **Note** : `core-tsdf` (TSDF + Marching Cubes C++) a été retiré en session 6. La reconstruction de surface sera assurée par le LiDAR 2D de l'ESP32 (voir `platform.md`).
 
 ---
 

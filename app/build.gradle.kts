@@ -51,7 +51,6 @@ dependencies {
     implementation(project(":core-common"))
     implementation(project(":core-slam"))
     implementation(project(":core-depth"))
-    implementation(project(":core-tsdf"))
     implementation(project(":core-render"))
     implementation(project(":core-net"))
     implementation(project(":core-nav"))
