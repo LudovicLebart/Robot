@@ -9,10 +9,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
 
 class VerticalSafetyMonitor(
-    /** Distance below which the up sensor triggers obstacle alert (mm). */
-    private val obstacleUpThresholdMm: Int = 300,
-    /** Distance above which the down sensor triggers void alert (mm). */
-    private val voidDownThresholdMm: Int = 400,
+    private val obstacleUpThresholdMm: Int = NetConfig.SAFETY_OBSTACLE_UP_THRESHOLD_MM,
+    private val voidDownThresholdMm: Int   = NetConfig.SAFETY_VOID_DOWN_THRESHOLD_MM,
 ) {
     private val _safetyState = MutableStateFlow<SafetyState>(SafetyState.Ok)
     val safetyState: StateFlow<SafetyState> = _safetyState

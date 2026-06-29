@@ -6,23 +6,24 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Renders a world-space point cloud as GL_POINTS.
- * Color and capacity are set at construction time so the same class serves
- * both Neural-Depth back-projection (yellow, 12 000 pts) and ARCore VIO
- * feature points (cyan, 500 pts).
+ * Renders a world-space point cloud as GL_POINTS with a solid uniform color.
+ * Used for the ARCore VIO raw feature points (cyan).
+ * All shader constants come from RenderConfig — no inline literals.
  */
 class PointCloudRenderer(
-    private val color: FloatArray = floatArrayOf(1f, 0.85f, 0f, 1f),  // default yellow
-    private val maxPoints: Int    = 12_000,
+    private val color: FloatArray,
+    private val maxPoints: Int,
 ) {
-
     private val vertSrc = """
         #version 300 es
+        #define SIZE_SCALE ${RenderConfig.POINT_CLOUD_SIZE_SCALE}
+        #define SIZE_MIN   ${RenderConfig.POINT_CLOUD_SIZE_MIN_PX}
+        #define SIZE_MAX   ${RenderConfig.POINT_CLOUD_SIZE_MAX_PX}
         uniform mat4 uMVP;
         in vec3 aPosition;
         void main() {
-            gl_Position = uMVP * vec4(aPosition, 1.0);
-            gl_PointSize = clamp(6.0 / gl_Position.w, 2.0, 12.0);
+            gl_Position  = uMVP * vec4(aPosition, 1.0);
+            gl_PointSize = clamp(SIZE_SCALE / gl_Position.w, SIZE_MIN, SIZE_MAX);
         }
     """.trimIndent()
 
@@ -67,7 +68,6 @@ class PointCloudRenderer(
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
     }
 
-    /** Upload world-space XYZ points. Must be called on the GL thread. */
     fun upload(pts: FloatArray, count: Int) {
         pointCount = minOf(count, maxPoints)
         if (pointCount == 0) return

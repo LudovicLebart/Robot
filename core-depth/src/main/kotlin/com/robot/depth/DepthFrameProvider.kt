@@ -49,7 +49,7 @@ object DepthFrameProvider {
                 val depthValues = ShortArray(width * height)
                 for (i in 0 until width * height) {
                     val raw = buf.get().toInt() and 0xFFFF
-                    depthValues[i] = if ((raw and 0x7) < 3) 0 else (raw ushr 3).toShort()
+                    depthValues[i] = if ((raw and 0x7) < DepthConfig.MIN_CONFIDENCE) 0 else (raw ushr 3).toShort()
                 }
 
                 val intrinsics    = frame.camera.textureIntrinsics

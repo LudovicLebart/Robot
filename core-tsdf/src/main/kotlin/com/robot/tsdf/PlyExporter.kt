@@ -50,10 +50,9 @@ object PlyExporter {
         }
 
         // Write binary PLY using a fixed 64KB chunk buffer to avoid one large allocation
-        val CHUNK = 64 * 1024
-        val buf = ByteBuffer.allocate(CHUNK).order(ByteOrder.LITTLE_ENDIAN)
+        val buf = ByteBuffer.allocate(TsdfConfig.PLY_CHUNK_BYTES).order(ByteOrder.LITTLE_ENDIAN)
 
-        file.outputStream().buffered(256 * 1024).use { out ->
+        file.outputStream().buffered(TsdfConfig.PLY_STREAM_BUFFER_BYTES).use { out ->
             out.write(header)
 
             // Vertex block: 24 bytes per vertex (6 floats)

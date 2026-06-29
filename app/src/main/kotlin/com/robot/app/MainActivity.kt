@@ -71,9 +71,9 @@ class MainActivity : ComponentActivity() {
         // ── Log overlay ─────────────────────────────────────────────────────
         logTextView = TextView(this).apply {
             typeface = Typeface.MONOSPACE
-            textSize = 11f
+            textSize = AppConfig.LOG_TEXT_SIZE_SP
             setTextColor(Color.GREEN)
-            setBackgroundColor(Color.argb(180, 0, 0, 0))
+            setBackgroundColor(AppConfig.LOG_BG_COLOR)
             setPadding(8, 8, 8, 8)
         }
         logScrollView = ScrollView(this).apply {
@@ -93,8 +93,8 @@ class MainActivity : ComponentActivity() {
             renderer.planViewEnabled = next
             runOnUiThread {
                 btnPlan.setBackgroundColor(
-                    if (next) Color.argb(220, 0, 100, 0)
-                    else Color.argb(180, 0, 0, 80)
+                    if (next) AppConfig.BTN_PLAN_ACTIVE_COLOR
+                    else AppConfig.BTN_DEFAULT_BG_COLOR
                 )
             }
             OverlayLogger.log(if (next) "Plan view ON" else "Plan view OFF (AR mode)")
@@ -105,19 +105,19 @@ class MainActivity : ComponentActivity() {
             meshVisible = !meshVisible
             renderer.meshVisible = meshVisible
             btnMesh.setBackgroundColor(
-                if (meshVisible) Color.argb(180, 0, 0, 80)
-                else Color.argb(220, 80, 0, 0)
+                if (meshVisible) AppConfig.BTN_DEFAULT_BG_COLOR
+                else AppConfig.BTN_MESH_HIDDEN_COLOR
             )
         }
-        btnMesh.post { btnMesh.setBackgroundColor(Color.argb(220, 80, 0, 0)) } // hidden by default
+        btnMesh.post { btnMesh.setBackgroundColor(AppConfig.BTN_MESH_HIDDEN_COLOR) }
 
         lateinit var btnVio: Button
         btnVio = makeButton("VIO") {
             vioCloudVisible = !vioCloudVisible
             renderer.vioCloudVisible = vioCloudVisible
             btnVio.setBackgroundColor(
-                if (vioCloudVisible) Color.argb(220, 0, 180, 180)
-                else Color.argb(180, 0, 0, 80)
+                if (vioCloudVisible) AppConfig.BTN_VIO_ACTIVE_COLOR
+                else AppConfig.BTN_DEFAULT_BG_COLOR
             )
         }
 
@@ -126,8 +126,8 @@ class MainActivity : ComponentActivity() {
             stableCloudVisible = !stableCloudVisible
             renderer.stableCloudVisible = stableCloudVisible
             btnMap.setBackgroundColor(
-                if (stableCloudVisible) Color.argb(220, 200, 200, 200)
-                else Color.argb(180, 0, 0, 80)
+                if (stableCloudVisible) AppConfig.BTN_MAP_ACTIVE_COLOR
+                else AppConfig.BTN_DEFAULT_BG_COLOR
             )
         }
 
@@ -135,9 +135,7 @@ class MainActivity : ComponentActivity() {
             btnSave.isEnabled = false
             viewModel.saveMesh { path ->
                 btnSave.isEnabled = true
-                Toast.makeText(this,
-                    "adb pull \"$path\"",
-                    Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "adb pull \"$path\"", Toast.LENGTH_LONG).show()
             }
         }
 
@@ -158,25 +156,22 @@ class MainActivity : ComponentActivity() {
             addView(
                 buttonRow,
                 FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.TOP or Gravity.END).apply {
-                    topMargin  = 16
-                    marginEnd  = 16
+                    topMargin = AppConfig.BTN_ROW_MARGIN_PX
+                    marginEnd = AppConfig.BTN_ROW_MARGIN_PX
                 },
             )
         }
         setContentView(root)
 
-        // Collect log text → overlay
         OverlayLogger.text.onEach { text ->
             logTextView.text = text
             if (logVisible) logScrollView.post { logScrollView.fullScroll(ScrollView.FOCUS_DOWN) }
         }.launchIn(lifecycleScope)
 
-        // Forward mesh snapshots to GL renderer
         viewModel.tsdfVolume.mesh.onEach { snap ->
             renderer.onMeshSnapshot(snap)
         }.launchIn(lifecycleScope)
 
-        // Session state
         viewModel.sessionState.onEach { state ->
             if (state is SessionState.Failed) {
                 OverlayLogger.log("SessionState.Failed: ${state.reason}")
@@ -184,7 +179,6 @@ class MainActivity : ComponentActivity() {
             }
         }.launchIn(lifecycleScope)
 
-        // Safety alerts
         viewModel.safetyState.onEach { safety ->
             when (safety) {
                 is SafetyState.VoidDetectedDown ->
@@ -219,11 +213,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun makeButton(label: String, onClick: () -> Unit) = Button(this).apply {
-        text         = label
-        textSize     = 11f
-        setBackgroundColor(Color.argb(180, 0, 0, 80))
+        text     = label
+        textSize = AppConfig.LOG_TEXT_SIZE_SP
+        setBackgroundColor(AppConfig.BTN_DEFAULT_BG_COLOR)
         setTextColor(Color.WHITE)
-        setPadding(16, 8, 16, 8)
+        setPadding(AppConfig.BTN_PADDING_H_PX, AppConfig.BTN_PADDING_V_PX,
+                   AppConfig.BTN_PADDING_H_PX, AppConfig.BTN_PADDING_V_PX)
         setOnClickListener { onClick() }
     }
 }

@@ -6,6 +6,7 @@ import com.google.ar.core.TrackingState
 import com.robot.common.MeshSnapshot
 import com.robot.depth.DepthFrameProvider
 import com.robot.nav.VioMapAccumulator
+import com.robot.nav.VioMapConfig
 import com.robot.slam.ArSessionManager
 import com.robot.slam.PoseExtractor
 import com.robot.tsdf.TsdfVolume
@@ -33,9 +34,13 @@ class SlamRenderer(
     private val floorCeilingDetector = FloorCeilingDetector()
     private val floorCeilingRenderer = FloorCeilingRenderer()
     // ARCore VIO feature points — cyan, sparse but stable
-    private val vioCloudRenderer    = PointCloudRenderer(floatArrayOf(0f, 1f, 1f, 1f), 500)
-    // Accumulated stable structural points — white
-    private val stableCloudRenderer = PointCloudRenderer(floatArrayOf(1f, 1f, 1f, 0.9f), 10_000)
+    private val vioCloudRenderer = PointCloudRenderer(
+        floatArrayOf(RenderConfig.VIO_CLOUD_COLOR_R, RenderConfig.VIO_CLOUD_COLOR_G,
+                     RenderConfig.VIO_CLOUD_COLOR_B, RenderConfig.VIO_CLOUD_COLOR_A),
+        RenderConfig.VIO_CLOUD_MAX_POINTS,
+    )
+    // Accumulated stable structural points — color by height, size by weight
+    private val stableMapRenderer = StableMapRenderer()
 
     private var viewMatrix = FloatArray(16)
     private var projMatrix = FloatArray(16)
@@ -46,8 +51,12 @@ class SlamRenderer(
     @Volatile var vioCloudVisible = false
     @Volatile var stableCloudVisible = false
 
-    private val vioBuf    = FloatArray(500 * 3)        // VIO XYZ scratch
-    private val stableBuf = FloatArray(10_000 * 3)     // stable map XYZ scratch
+    private val vioBuf    = FloatArray(RenderConfig.VIO_CLOUD_MAX_POINTS * 3)
+    private val vioIds    = IntArray(RenderConfig.VIO_CLOUD_MAX_POINTS)
+    private val vioConfs  = FloatArray(RenderConfig.VIO_CLOUD_MAX_POINTS)
+    private val stableBuf = FloatArray(VioMapConfig.MAX_STABLE_POINTS * 4)
+
+    private var vioFrameCount = 0
 
     private var lastKnownPos = floatArrayOf(0f, 0f, 0f)
 
@@ -71,7 +80,7 @@ class SlamRenderer(
         meshRenderer.init()
         floorCeilingRenderer.init()
         vioCloudRenderer.init()
-        stableCloudRenderer.init()
+        stableMapRenderer.init()
         sessionManager.setCameraTextureName(textureId)
         onLog("GL surface created texId=$textureId depthMode=${sessionManager.depthModeName}")
     }
@@ -105,12 +114,14 @@ class SlamRenderer(
 
         if (planViewEnabled) {
             // Dark background — no camera pass-through
-            GLES30.glClearColor(0.05f, 0.05f, 0.08f, 1f)
+            GLES30.glClearColor(RenderConfig.PLAN_BG_R, RenderConfig.PLAN_BG_G, RenderConfig.PLAN_BG_B, 1f)
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
             val pv = planViewMatrix(); val pp = planProjMatrix()
             if (meshVisible)       meshRenderer.drawPlanView(lastKnownPos)
             if (vioCloudVisible)   vioCloudRenderer.draw(pv, pp)
-            if (stableCloudVisible) stableCloudRenderer.draw(pv, pp)
+            if (stableCloudVisible) stableMapRenderer.draw(pv, pp,
+                floorCeilingDetector.floorY ?: RenderConfig.FALLBACK_FLOOR_Y_M,
+                floorCeilingDetector.ceilingY ?: RenderConfig.FALLBACK_CEILING_Y_M)
             floorCeilingRenderer.draw(pv, pp)
             return
         }
@@ -137,7 +148,7 @@ class SlamRenderer(
 
             val frameData = DepthFrameProvider.extract(frame, c2w) { err ->
                 depthFailCount++
-                if (depthFailCount == 1 || depthFailCount % 90 == 0) {
+                if (depthFailCount == 1 || depthFailCount % RenderConfig.LOG_THROTTLE_FRAMES == 0) {
                     onLog("depth FAIL #$depthFailCount: $err")
                 }
             }
@@ -164,13 +175,13 @@ class SlamRenderer(
 
                 // Skip frames where almost no pixels survived the confidence filter —
                 // they add negligible TSDF signal but consume pipeline time.
-                val sent = if (validPct >= 5) {
+                val sent = if (validPct >= RenderConfig.MIN_VALID_DEPTH_PCT) {
                     tsdfVolume.frameChannel.trySend(frameData).isSuccess
                 } else {
                     false
                 }
 
-                if (depthSuccessCount == 1 || depthSuccessCount % 90 == 0) {
+                if (depthSuccessCount == 1 || depthSuccessCount % RenderConfig.LOG_THROTTLE_FRAMES == 0) {
                     val px = c2w[12]; val py = c2w[13]; val pz = c2w[14]
                     if (depthSuccessCount == 1) {
                         onLog("depth FIRST ${w}x${h} " +
@@ -187,26 +198,34 @@ class SlamRenderer(
         // ARCore VIO feature points — always acquire for accumulation, render conditionally
         try {
             frame.acquirePointCloud().use { pc ->
-                val buf = pc.points  // (x, y, z, confidence) quads
+                val buf   = pc.points  // (x, y, z, confidence) quads
+                val idBuf = pc.ids     // point IDs, parallel to buf
                 val n = minOf(buf.remaining() / 4, 500)
                 for (i in 0 until n) {
                     vioBuf[i * 3]     = buf.get()
                     vioBuf[i * 3 + 1] = buf.get()
                     vioBuf[i * 3 + 2] = buf.get()
-                    buf.get()  // skip confidence
+                    vioConfs[i]        = buf.get()
+                    vioIds[i]          = idBuf.get()
                 }
-                vioAccumulator.update(vioBuf, n)
+                vioAccumulator.update(vioBuf, vioIds, vioConfs, n)
+                vioFrameCount++
+                if (vioFrameCount % RenderConfig.LOG_THROTTLE_FRAMES == 0) {
+                    onLog("VIO map: total=${vioAccumulator.totalCount()} stable=${vioAccumulator.stableCount()} pts=$n")
+                }
                 if (vioCloudVisible) vioCloudRenderer.upload(vioBuf, n)
                 if (stableCloudVisible) {
-                    val sn = vioAccumulator.getStablePoints(stableBuf)
-                    stableCloudRenderer.upload(stableBuf, sn)
+                    val sn = vioAccumulator.getStablePointsWeighted(stableBuf)
+                    stableMapRenderer.upload(stableBuf, sn)
                 }
             }
         } catch (_: Exception) { /* PointCloud not available this frame */ }
 
         if (meshVisible)        meshRenderer.draw(viewMatrix, projMatrix)
         if (vioCloudVisible)    vioCloudRenderer.draw(viewMatrix, projMatrix)
-        if (stableCloudVisible) stableCloudRenderer.draw(viewMatrix, projMatrix)
+        if (stableCloudVisible) stableMapRenderer.draw(viewMatrix, projMatrix,
+            floorCeilingDetector.floorY ?: RenderConfig.FALLBACK_FLOOR_Y_M,
+            floorCeilingDetector.ceilingY ?: RenderConfig.FALLBACK_CEILING_Y_M)
         floorCeilingRenderer.draw(viewMatrix, projMatrix)
     }
 
@@ -214,17 +233,18 @@ class SlamRenderer(
     private fun planViewMatrix(): FloatArray {
         val view = FloatArray(16)
         android.opengl.Matrix.setLookAtM(view, 0,
-            0f, 8f, 0f,   // eye directly above grid centre
-            0f, 0f, 0f,   // look at grid centre
-            0f, 0f, -1f,  // north = world −Z
+            0f, RenderConfig.PLAN_VIEW_EYE_HEIGHT_M, 0f,
+            0f, 0f, 0f,
+            0f, 0f, -1f,
         )
         return view
     }
 
-    /** Plan-view orthographic projection — mirrors MeshRenderer.drawPlanView. */
     private fun planProjMatrix(): FloatArray {
         val proj = FloatArray(16)
-        android.opengl.Matrix.orthoM(proj, 0, -3.3f, 3.3f, -3.3f, 3.3f, 0.5f, 16f)
+        val h = RenderConfig.PLAN_VIEW_ORTHO_HALF_EXTENT_M
+        android.opengl.Matrix.orthoM(proj, 0, -h, h, -h, h,
+            RenderConfig.PLAN_VIEW_NEAR_M, RenderConfig.PLAN_VIEW_FAR_M)
         return proj
     }
 
@@ -233,9 +253,9 @@ class SlamRenderer(
         val floor = floorCeilingDetector.floorY
         val ceiling = floorCeilingDetector.ceilingY
         val floorChanged = floor != null &&
-            (lastLoggedFloorY == null || kotlin.math.abs(floor - lastLoggedFloorY!!) > 0.05f)
+            (lastLoggedFloorY == null || kotlin.math.abs(floor - lastLoggedFloorY!!) > RenderConfig.PLANE_LOG_THRESHOLD_M)
         val ceilingChanged = ceiling != null &&
-            (lastLoggedCeilingY == null || kotlin.math.abs(ceiling - lastLoggedCeilingY!!) > 0.05f)
+            (lastLoggedCeilingY == null || kotlin.math.abs(ceiling - lastLoggedCeilingY!!) > RenderConfig.PLANE_LOG_THRESHOLD_M)
         if (floorChanged || ceilingChanged) {
             lastLoggedFloorY = floor
             lastLoggedCeilingY = ceiling

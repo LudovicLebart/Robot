@@ -9,7 +9,7 @@ Au début de chaque session, lire ces fichiers dans l'ordre — ils sont la **so
 1. `docs/platform.md` — architecture matérielle et logicielle complète (vision système)
 2. `docs/explanation.md` — pipeline de threading, TSDF, choix techniques (le POURQUOI)
 3. `docs/reference.md` — modules, types partagés, API JNI, dépendances
-4. `docs/journal-session-3.md` — état actuel du pipeline, bugs corrigés, TODO prioritaires
+4. `docs/journal-session-5.md` — état actuel du pipeline, bugs corrigés, TODO prioritaires
 
 Le `docs/tutorial.md` et `docs/how-to.md` sont en lecture **à la demande uniquement** (installation, recettes courantes).
 
@@ -37,6 +37,7 @@ Le `docs/tutorial.md` et `docs/how-to.md` sont en lecture **à la demande unique
 - **Jamais** modifier le pipeline TSDF et le rendu GL dans le même commit
 - **Jamais** appeler `nativeDestroy` depuis le main thread — uniquement depuis `processLoop.finally`
 - **Jamais** uploader un VBO depuis un thread non-GL
+- **Jamais** hardcoder quoi que ce soit — aucun nombre magique, aucun paramètre de fallback inline, aucun chemin en dur. Toute valeur numérique nommée va dans un objet `Config` du module concerné (ex. `VioMapConfig`, `RenderConfig`). Les shaders GLSL reçoivent leurs constantes via interpolation de string depuis ces objets.
 - **Jamais** hardcoder l'IP de l'ESP32 — paramètre dans `AppModule.kt`
 - **Toujours** vérifier la convention ARCore : Y+ vers le haut, Z vers l'arrière, matrice colonne-major
 - **Toujours** décoder DEPTH16 : `depth_mm = (raw_uint16 >> 3)`, ignorer si `(raw & 0x7) == 0`
@@ -112,38 +113,42 @@ adb logcat -v time | findstr "TSDF mesh"
 
 ---
 
-## État courant du projet (session 4 — 28 juin 2026)
+## État courant du projet (session 5 — 29 juin 2026)
 
-**Pipeline fonctionnel :** ARCore → DEPTH16 décodé (confiance ≥3, clamp 0.3–8 m) → TSDF voxel hashing (truncation 8 cm, weight ≥5, carte illimitée) → Marching Cubes incrémental → Mesh opaque cyan + bouton SAVE → PLY.
+**Pipeline fonctionnel :** ARCore → DEPTH16 décodé (confiance ≥3, clamp 0.3–8 m) → TSDF voxel hashing (truncation 8 cm, weight ≥5, carte illimitée) → Marching Cubes incrémental → Mesh opaque cyan + bouton SAVE → PLY. **[Session 5]** Nuage VIO accumulé (VioMapAccumulator, core-nav) → carte structurelle persistante colorée par hauteur.
 
-**Améliorations cumulées (sessions 1 → 4) :**
+**Améliorations cumulées (sessions 1 → 5) :**
 - DEPTH16 : décodage `(raw >> 3)`, filtre confiance ≥3/7, clamp [300 mm, 8000 mm]
 - Y-flip corrigé dans la projection TSDF (`-camY`)
-- Truncation élargie : 4 cm → 8 cm (bande 4 voxels pour ARCore Neural Depth)
+- Truncation élargie : 4 cm → 8 cm
 - Weight filter : voxels avec poids < 5 ignorés par Marching Cubes
 - Alignement 16 Ko pour Android 15 / Pixel 9
 - Mesh opaque (alpha 1.0), teinte cyan
-- Vue plan : caméra overhead fixe `(0,8,0)`, ortho ±3.3 m, UV corrigés en rotation
+- Vue plan : caméra overhead fixe `(0,8,0)`, ortho ±3.3 m
 - Export PLY binaire via bouton SAVE + `adb pull`
-- **[Session 4]** TSDF voxel hashing : grille dense 300×150×300 remplacée par une carte illimitée
-  - Blocs 8×8×8 alloués à la demande (`std::unordered_map` + hash de Teschner)
-  - Intégration pixel-driven (~1.2M mises à jour/frame vs 13.5M pour la grille dense)
-  - Depth range élargi : 3 m → **8 m** (plus de contrainte de bord de grille)
-  - Marching Cubes incrémental : seuls les blocs `dirty` sont re-marchés
-  - Éviction automatique : blocs à >12 m + âge >300 frames supprimés toutes les 60 frames
-  - API Kotlin/JNI inchangée (`sizeX/Y/Z` ignorés par le C++)
+- **[Session 4]** TSDF voxel hashing illimité (blocs 8×8×8, hash Teschner, éviction automatique)
+- **[Session 5]** VioMapAccumulator (core-nav) :
+  - Indexation par ID ARCore (stable pendant le tracking), moyenne pondérée par confiance
+  - Éviction des points instables stagnants (STALE_FRAMES=150)
+  - Snapshot trié par count → les 10 000 points les plus confirmés affichés (anti-scintillement)
+  - StableMapRenderer : couleur par hauteur (vert sol → rouge mi → bleu plafond), taille par poids, points circulaires
+  - Couleurs ancrées sur floorY/ceilingY réels (uniforms GL) depuis FloorCeilingDetector
+- **[Session 5]** Refactoring "no hardcode" : 7 objets Config (VioMapConfig, RenderConfig, SlamConfig, TsdfConfig, DepthConfig, NetConfig, AppConfig), constantes GLSL injectées via string interpolation Kotlin
 
 **TODO prioritaires :**
 
 | Priorité | Tâche | Statut |
 |----------|-------|--------|
-| Haute | Tester sur Pixel 9 — vérifier mesh visible après ~30 s de sweep | En attente |
-| Haute | Vérifier vertices en vue PLAN (doit monter à >10 000) | En attente |
-| Haute | Finaliser installation Android Studio + NDK sur PC Windows | En cours |
-| Moyenne | **[Phase B]** Grille d'occupation 2D (`core-nav`) pour la navigation | À faire |
+| Haute | Tester B.1.5 sur Pixel 9 — vérifier stable count et absence de scintillement | En attente |
+| Haute | Investiguer TSDF mesh plafonné à 300 000 vertices | À faire |
+| Moyenne | **[Phase B.2]** Reconstruction de surface depuis la carte VIO accumulée | À planifier |
+| Moyenne | Vue PLAN : zoom/pan + indicateur position courante | À faire |
+| Basse | Détection objets mobiles lents (variance par point, garde dérive ARCore) | À faire |
+| Basse | Persistance VioMapAccumulator entre sessions | À faire |
 | Basse | `core-net` WebSocket ESP32 + `SafetyState` IR | À faire |
 | ~~Moyenne~~ | ~~Volume TSDF glissant centré sur le robot~~ | **RÉSOLU** par voxel hashing |
 | ~~Basse~~ | ~~Export `.ply` pour validation MeshLab~~ | **FAIT** |
+| ~~Haute~~ | ~~Phase B.1 — VioMapAccumulator + nuage stable~~ | **FAIT session 5** |
 
 ---
 

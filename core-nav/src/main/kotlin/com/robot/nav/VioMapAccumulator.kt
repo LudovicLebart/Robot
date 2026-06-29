@@ -1,37 +1,72 @@
 package com.robot.nav
 
-import kotlin.math.floor
-
 /**
- * Accumulates ARCore VIO feature points (world-space XYZ) into a voxel grid.
- * Points observed in ≥minObservations frames are considered structural.
+ * Accumulates ARCore VIO feature points by their persistent ID.
+ * Each point's position is a confidence-weighted mean across all observations.
+ * Points observed ≥ VioMapConfig.MIN_OBSERVATIONS times are considered structural.
  *
- * Call update() and getStablePoints() from the GL thread only — no synchronisation needed.
+ * Unstable points not re-observed for VioMapConfig.STALE_FRAMES frames are evicted.
+ * Stable points are never evicted.
+ *
+ * Every VioMapConfig.EVICT_INTERVAL_FRAMES frames, a sorted snapshot of stable points
+ * is rebuilt (descending by count) so getStablePointsWeighted always returns the most
+ * confirmed points first — eliminates per-frame HashMap iteration churn.
+ *
+ * Call update() and getStablePoints*() from the GL thread only — no synchronisation needed.
  */
 class VioMapAccumulator(
-    val voxelSize: Float = 0.05f,
-    val minObservations: Int = 8,
-    val maxStablePoints: Int = 10_000,
+    val minObservations: Int = VioMapConfig.MIN_OBSERVATIONS,
+    val maxStablePoints: Int = VioMapConfig.MAX_STABLE_POINTS,
+    val staleFrames: Int     = VioMapConfig.STALE_FRAMES,
 ) {
-    private class VoxelEntry(var count: Int, var x: Float, var y: Float, var z: Float)
+    private class Entry(
+        var wx: Float, var wy: Float, var wz: Float,  // sum of (position × confidence)
+        var tw: Float,                                  // sum of confidence weights
+        var count: Int,                                 // number of observations
+        var lastSeen: Int,                              // frame index of last observation
+    ) {
+        val x get() = wx / tw
+        val y get() = wy / tw
+        val z get() = wz / tw
+    }
 
-    private val grid = HashMap<Long, VoxelEntry>(4096)
+    private val byId = HashMap<Int, Entry>(VioMapConfig.INITIAL_MAP_CAPACITY)
+    private var frameIndex = 0
 
-    /** Merge a batch of world-space XYZ points (stride 3). */
-    fun update(xyz: FloatArray, count: Int) {
+    // Sorted snapshot rebuilt every EVICT_INTERVAL_FRAMES — avoids per-frame sort + GC.
+    private var sortedSnapshot: List<Entry> = emptyList()
+
+    /**
+     * Merge a batch of VIO points keyed by their ARCore IDs.
+     * [xyz] stride-3 world-space positions, [ids] and [confidences] are parallel arrays.
+     * Evicts stale unstable points and rebuilds the sorted snapshot every
+     * VioMapConfig.EVICT_INTERVAL_FRAMES frames.
+     */
+    fun update(xyz: FloatArray, ids: IntArray, confidences: FloatArray, count: Int) {
+        frameIndex++
         for (i in 0 until count) {
-            val wx = xyz[i * 3]
-            val wy = xyz[i * 3 + 1]
-            val wz = xyz[i * 3 + 2]
-            val key = voxelKey(wx, wy, wz)
-            val e = grid.getOrPut(key) { VoxelEntry(0, wx, wy, wz) }
+            val conf = maxOf(confidences[i], VioMapConfig.MIN_CONFIDENCE)
+            val e = byId.getOrPut(ids[i]) { Entry(0f, 0f, 0f, 0f, 0, frameIndex) }
+            e.wx += xyz[i * 3] * conf
+            e.wy += xyz[i * 3 + 1] * conf
+            e.wz += xyz[i * 3 + 2] * conf
+            e.tw += conf
             e.count++
-            // Welford running mean — numerically stable, no extra allocation
-            val inv = 1f / e.count
-            e.x += (wx - e.x) * inv
-            e.y += (wy - e.y) * inv
-            e.z += (wz - e.z) * inv
+            e.lastSeen = frameIndex
         }
+        if (frameIndex % VioMapConfig.EVICT_INTERVAL_FRAMES == 0) rebuildSnapshot()
+    }
+
+    private fun rebuildSnapshot() {
+        val threshold = frameIndex - staleFrames
+        val iter = byId.iterator()
+        while (iter.hasNext()) {
+            val e = iter.next().value
+            if (e.count < minObservations && e.lastSeen < threshold) iter.remove()
+        }
+        sortedSnapshot = byId.values
+            .filter { it.count >= minObservations }
+            .sortedByDescending { it.count }
     }
 
     /**
@@ -41,32 +76,40 @@ class VioMapAccumulator(
     fun getStablePoints(out: FloatArray): Int {
         val limit = minOf(maxStablePoints, out.size / 3)
         var n = 0
-        for (e in grid.values) {
+        for (e in sortedSnapshot) {
             if (n >= limit) break
-            if (e.count >= minObservations) {
-                out[n * 3]     = e.x
-                out[n * 3 + 1] = e.y
-                out[n * 3 + 2] = e.z
-                n++
-            }
+            out[n * 3]     = e.x
+            out[n * 3 + 1] = e.y
+            out[n * 3 + 2] = e.z
+            n++
         }
         return n
     }
 
-    fun stableCount(): Int = grid.values.count { it.count >= minObservations }
-
-    fun reset() = grid.clear()
-
     /**
-     * Pack voxel grid indices into a Long key.
-     * 21 bits per axis → range ±52 m at 5 cm resolution, sufficient for indoor navigation.
+     * Write stable points into [out] (stride 4: x,y,z,observationCount).
+     * Uses the pre-sorted snapshot so the most-confirmed points are always rendered
+     * when count exceeds maxStablePoints.
      */
-    private fun voxelKey(x: Float, y: Float, z: Float): Long {
-        val ix = floor((x / voxelSize).toDouble()).toInt()
-        val iy = floor((y / voxelSize).toDouble()).toInt()
-        val iz = floor((z / voxelSize).toDouble()).toInt()
-        return ((ix.toLong() and 0x1FFFFF) shl 42) or
-               ((iy.toLong() and 0x1FFFFF) shl 21) or
-                (iz.toLong() and 0x1FFFFF)
+    fun getStablePointsWeighted(out: FloatArray): Int {
+        val limit = minOf(maxStablePoints, out.size / 4)
+        var n = 0
+        for (e in sortedSnapshot) {
+            if (n >= limit) break
+            out[n * 4]     = e.x
+            out[n * 4 + 1] = e.y
+            out[n * 4 + 2] = e.z
+            out[n * 4 + 3] = e.count.toFloat()
+            n++
+        }
+        return n
+    }
+
+    fun stableCount(): Int = sortedSnapshot.size
+    fun totalCount(): Int  = byId.size
+    fun reset() {
+        byId.clear()
+        sortedSnapshot = emptyList()
+        frameIndex = 0
     }
 }

@@ -8,25 +8,13 @@ import java.nio.FloatBuffer
 
 /**
  * Renders axis-aligned wireframe grids for the detected floor and ceiling planes.
- *
- * Each plane is a 10 m × 10 m grid (lines every 0.5 m) centred on the camera's
- * current XZ position. Floor is green, ceiling is blue. Drawn with GL_LINES.
- *
- * Geometry for both planes lives in one VBO: floor vertices first, then ceiling.
- * Two draw calls select the range and supply the tint via a uniform.
- *
- * All methods must be called on the GL thread.
+ * Grid geometry and colors come from RenderConfig — no inline literals.
  */
 class FloorCeilingRenderer {
 
-    companion object {
-        private const val HALF_EXTENT = 5.0f     // 10 m grid → ±5 m
-        private const val STEP = 0.5f            // line spacing
-        private const val LINES_PER_AXIS = 21    // (2*5 / 0.5) + 1
-        // 21 lines ∥X + 21 lines ∥Z = 42 lines, each 2 verts, each vert 3 floats.
-        private const val VERTS_PER_PLANE = LINES_PER_AXIS * 2 * 2     // 84
-        private const val FLOATS_PER_PLANE = VERTS_PER_PLANE * 3       // 252
-    }
+    private val linesPerAxis = ((2 * RenderConfig.GRID_HALF_EXTENT_M / RenderConfig.GRID_STEP_M) + 1).toInt()
+    private val vertsPerPlane = linesPerAxis * 2 * 2
+    private val floatsPerPlane = vertsPerPlane * 3
 
     private var program = 0
     private var vbo = 0
@@ -39,9 +27,8 @@ class FloorCeilingRenderer {
     private var floorVertCount = 0
     private var ceilingVertCount = 0
 
-    // Scratch CPU buffer for both planes (floor block then ceiling block).
     private val cpuBuffer: FloatBuffer = ByteBuffer
-        .allocateDirect(FLOATS_PER_PLANE * 2 * 4)
+        .allocateDirect(floatsPerPlane * 2 * 4)
         .order(ByteOrder.nativeOrder())
         .asFloatBuffer()
 
@@ -80,10 +67,9 @@ class FloorCeilingRenderer {
 
         GLES30.glBindVertexArray(vao)
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vbo)
-        // Reserve worst-case storage; data filled by updatePlanes().
         GLES30.glBufferData(
             GLES30.GL_ARRAY_BUFFER,
-            FLOATS_PER_PLANE * 2 * 4,
+            floatsPerPlane * 2 * 4,
             null,
             GLES30.GL_DYNAMIC_DRAW,
         )
@@ -93,21 +79,17 @@ class FloorCeilingRenderer {
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
     }
 
-    /**
-     * Rebuild grid geometry for the current plane heights and camera XZ centre.
-     * Pass null for a plane that has not been detected yet — it is simply skipped.
-     */
     fun updatePlanes(floorY: Float?, ceilingY: Float?, centerX: Float, centerZ: Float) {
         cpuBuffer.clear()
 
         floorVertCount = if (floorY != null) {
             appendGrid(floorY, centerX, centerZ)
-            VERTS_PER_PLANE
+            vertsPerPlane
         } else 0
 
         ceilingVertCount = if (ceilingY != null) {
             appendGrid(ceilingY, centerX, centerZ)
-            VERTS_PER_PLANE
+            vertsPerPlane
         } else 0
 
         val totalFloats = (floorVertCount + ceilingVertCount) * 3
@@ -121,24 +103,22 @@ class FloorCeilingRenderer {
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
     }
 
-    /** Append one plane's 42 grid lines (84 verts) into [cpuBuffer] at its current position. */
     private fun appendGrid(y: Float, cx: Float, cz: Float) {
+        val half = RenderConfig.GRID_HALF_EXTENT_M
+        val step = RenderConfig.GRID_STEP_M
         var i = 0
-        while (i < LINES_PER_AXIS) {
-            val offset = -HALF_EXTENT + i * STEP
-            // Line parallel to Z (constant X = cx + offset).
+        while (i < linesPerAxis) {
+            val offset = -half + i * step
             val x = cx + offset
-            cpuBuffer.put(x).put(y).put(cz - HALF_EXTENT)
-            cpuBuffer.put(x).put(y).put(cz + HALF_EXTENT)
-            // Line parallel to X (constant Z = cz + offset).
+            cpuBuffer.put(x).put(y).put(cz - half)
+            cpuBuffer.put(x).put(y).put(cz + half)
             val z = cz + offset
-            cpuBuffer.put(cx - HALF_EXTENT).put(y).put(z)
-            cpuBuffer.put(cx + HALF_EXTENT).put(y).put(z)
+            cpuBuffer.put(cx - half).put(y).put(z)
+            cpuBuffer.put(cx + half).put(y).put(z)
             i++
         }
     }
 
-    /** Draw both detected grids. No-op for planes that have no geometry. */
     fun draw(viewMatrix: FloatArray, projMatrix: FloatArray) {
         if (floorVertCount == 0 && ceilingVertCount == 0) return
 
@@ -147,20 +127,18 @@ class FloorCeilingRenderer {
 
         GLES30.glUseProgram(program)
         GLES30.glUniformMatrix4fv(locMVP, 1, false, mvp, 0)
-
-        // Keep depth test so grids sit correctly in the scene, but do not write
-        // depth so the (opaque) mesh is never occluded by an invisible grid plane.
         GLES30.glEnable(GLES30.GL_DEPTH_TEST)
         GLES30.glDepthMask(false)
-
         GLES30.glBindVertexArray(vao)
 
         if (floorVertCount > 0) {
-            GLES30.glUniform3f(locTint, 0.2f, 0.9f, 0.2f)   // floor: green
+            GLES30.glUniform3f(locTint,
+                RenderConfig.GRID_FLOOR_TINT_R, RenderConfig.GRID_FLOOR_TINT_G, RenderConfig.GRID_FLOOR_TINT_B)
             GLES30.glDrawArrays(GLES30.GL_LINES, 0, floorVertCount)
         }
         if (ceilingVertCount > 0) {
-            GLES30.glUniform3f(locTint, 0.3f, 0.5f, 1.0f)   // ceiling: blue
+            GLES30.glUniform3f(locTint,
+                RenderConfig.GRID_CEILING_TINT_R, RenderConfig.GRID_CEILING_TINT_G, RenderConfig.GRID_CEILING_TINT_B)
             GLES30.glDrawArrays(GLES30.GL_LINES, floorVertCount, ceilingVertCount)
         }
 

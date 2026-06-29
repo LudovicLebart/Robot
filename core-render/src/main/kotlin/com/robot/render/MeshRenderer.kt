@@ -36,13 +36,14 @@ class MeshRenderer {
     private val fragSrc = """
         #version 300 es
         precision mediump float;
+        #define MIN_DIFFUSE ${RenderConfig.MESH_MIN_DIFFUSE}
         uniform vec3  uTint;
         uniform float uAlpha;
         in vec3 vNormalView;
         out vec4 fragColor;
         void main() {
             vec3  n       = normalize(vNormalView);
-            float diffuse = max(dot(n, vec3(0.0, 0.0, 1.0)), 0.15);
+            float diffuse = max(dot(n, vec3(0.0, 0.0, 1.0)), MIN_DIFFUSE);
             fragColor     = vec4(uTint * diffuse, uAlpha);
         }
     """.trimIndent()
@@ -80,7 +81,6 @@ class MeshRenderer {
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
     }
 
-    /** Upload a new mesh snapshot. Call on the GL thread. */
     fun uploadMesh(snapshot: MeshSnapshot) {
         if (snapshot.vertexCount == 0) {
             currentVertexCount = 0
@@ -104,38 +104,29 @@ class MeshRenderer {
         currentVertexCount = snapshot.vertexCount
     }
 
-    /**
-     * Draw the mesh in AR (camera pass-through) mode.
-     * Opaque cyan tint so it's clearly visible over the camera feed.
-     */
     fun draw(viewMatrix: FloatArray, projMatrix: FloatArray) {
         drawInternal(viewMatrix, projMatrix,
-            tintR = 0.3f, tintG = 0.9f, tintB = 0.6f, alpha = 1.0f)
+            RenderConfig.MESH_AR_TINT_R, RenderConfig.MESH_AR_TINT_G, RenderConfig.MESH_AR_TINT_B,
+            alpha = 1.0f)
     }
 
-    /**
-     * Draw the mesh for the top-down plan view.
-     * Always shows the full TSDF grid (±3 m in X/Z) from a fixed overhead camera
-     * so the map remains visible even when the robot walks outside the grid bounds.
-     * [cameraPos] is currently unused but kept for a future "locate robot" marker.
-     */
     fun drawPlanView(@Suppress("UNUSED_PARAMETER") cameraPos: FloatArray) {
         if (currentVertexCount == 0) return
 
         val view = FloatArray(16)
-        // Eye fixed 8 m above the grid centre (0, 0, 0), looking straight down.
         Matrix.setLookAtM(view, 0,
-            0f, 8f, 0f,   // eye: directly above grid centre
-            0f, 0f, 0f,   // look at grid centre
-            0f, 0f, -1f,  // north = world –Z
+            0f, RenderConfig.PLAN_VIEW_EYE_HEIGHT_M, 0f,
+            0f, 0f, 0f,
+            0f, 0f, -1f,
         )
-
         val proj = FloatArray(16)
-        // Tight ortho covering the full TSDF grid extent (6 m × 6 m + 10 % margin)
-        Matrix.orthoM(proj, 0, -3.3f, 3.3f, -3.3f, 3.3f, 0.5f, 16f)
+        val h = RenderConfig.PLAN_VIEW_ORTHO_HALF_EXTENT_M
+        Matrix.orthoM(proj, 0, -h, h, -h, h,
+            RenderConfig.PLAN_VIEW_NEAR_M, RenderConfig.PLAN_VIEW_FAR_M)
 
         drawInternal(view, proj,
-            tintR = 0.2f, tintG = 1.0f, tintB = 0.4f, alpha = 1.0f)
+            RenderConfig.MESH_PLAN_TINT_R, RenderConfig.MESH_PLAN_TINT_G, RenderConfig.MESH_PLAN_TINT_B,
+            alpha = 1.0f)
     }
 
     private fun drawInternal(

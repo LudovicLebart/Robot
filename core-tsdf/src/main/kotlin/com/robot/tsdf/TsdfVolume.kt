@@ -11,11 +11,11 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 class TsdfVolume(
-    sizeX: Int = 300,
-    sizeY: Int = 150,
-    sizeZ: Int = 300,
-    voxelSizeM: Float = 0.03f,
-    truncationM: Float = 0.09f,   // 9 cm = 3 voxels — coarser for cleaner MC output with Neural Depth
+    sizeX: Int     = TsdfConfig.LEGACY_GRID_SIZE_X,
+    sizeY: Int     = TsdfConfig.LEGACY_GRID_SIZE_Y,
+    sizeZ: Int     = TsdfConfig.LEGACY_GRID_SIZE_Z,
+    voxelSizeM: Float  = TsdfConfig.VOXEL_SIZE_M,
+    truncationM: Float = TsdfConfig.TRUNCATION_M,
     private val onLog: (String) -> Unit = {},
 ) {
     companion object {
@@ -24,7 +24,6 @@ class TsdfVolume(
 
     private val handle: Long = nativeCreate(sizeX, sizeY, sizeZ, voxelSizeM, truncationM)
 
-    /** CONFLATED channel: always holds the latest frame, drops old ones if the TSDF is busy. */
     val frameChannel = Channel<FrameData>(Channel.CONFLATED)
 
     private val _mesh = MutableStateFlow(
@@ -37,13 +36,7 @@ class TsdfVolume(
     val mesh: StateFlow<MeshSnapshot> = _mesh
 
     private var frameCount = 0
-    private val meshExtractInterval = 30   // extract mesh every N integrated frames
 
-    /**
-     * Run this in a dedicated coroutine on Dispatchers.Default.
-     * nativeDestroy is called in the finally block so it only runs after the last
-     * nativeIntegrate call completes — preventing use-after-free when close() is called.
-     */
     suspend fun processLoop() = withContext(Dispatchers.Default) {
         onLog("TSDF loop started handle=$handle")
         try {
@@ -57,14 +50,14 @@ class TsdfVolume(
                 frameCount++
                 if (frameCount == 1) onLog("TSDF first frame integrated ${frame.depthWidth}x${frame.depthHeight}")
 
-                if (frameCount % meshExtractInterval == 0) {
+                if (frameCount % TsdfConfig.MESH_EXTRACT_INTERVAL == 0) {
                     val raw = nativeExtractMesh(handle)
                     if (raw == null || raw.isEmpty()) {
-                        onLog("TSDF mesh #${frameCount / meshExtractInterval}: 0 vertices (TSDF not dense enough yet)")
+                        onLog("TSDF mesh #${frameCount / TsdfConfig.MESH_EXTRACT_INTERVAL}: 0 vertices (TSDF not dense enough yet)")
                         continue
                     }
                     val n = raw.size / 6
-                    onLog("TSDF mesh #${frameCount / meshExtractInterval}: $n vertices after $frameCount frames")
+                    onLog("TSDF mesh #${frameCount / TsdfConfig.MESH_EXTRACT_INTERVAL}: $n vertices after $frameCount frames")
 
                     val vbuf = ByteBuffer.allocateDirect(n * 3 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
                     val nbuf = ByteBuffer.allocateDirect(n * 3 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
@@ -87,7 +80,6 @@ class TsdfVolume(
         nativeReset(handle)
     }
 
-    /** Signal the loop to stop. nativeDestroy is called by processLoop's finally block. */
     fun close() {
         frameChannel.close()
     }

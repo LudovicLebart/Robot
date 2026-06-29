@@ -2,6 +2,7 @@ package com.robot.app.di
 
 import android.content.Context
 import com.robot.app.OverlayLogger
+import com.robot.net.NetConfig
 import com.robot.net.VerticalSafetyMonitor
 import com.robot.net.WebSocketEsp32Client
 import com.robot.slam.ArSessionManager
@@ -38,8 +39,8 @@ object AppModule {
     fun provideEsp32Client(scope: CoroutineScope): WebSocketEsp32Client =
         WebSocketEsp32Client(
             scope = scope,
-            ip = "192.168.1.100",   // override via config/settings screen
-            port = 8080,
+            ip    = NetConfig.ESP32_IP,
+            port  = NetConfig.ESP32_PORT,
         )
 
     @Provides

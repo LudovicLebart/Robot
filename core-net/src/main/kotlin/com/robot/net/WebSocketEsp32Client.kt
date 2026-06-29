@@ -16,17 +16,17 @@ import java.util.concurrent.TimeUnit
 class WebSocketEsp32Client(
     private val scope: CoroutineScope,
     private val ip: String,
-    private val port: Int = 8080,
+    private val port: Int = NetConfig.ESP32_PORT,
 ) {
     private val _readings = MutableSharedFlow<IrReading>(replay = 1)
     val readings: SharedFlow<IrReading> = _readings
 
     private val client = OkHttpClient.Builder()
-        .readTimeout(0, TimeUnit.MILLISECONDS)  // no read timeout for WS
+        .readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
 
     private var webSocket: WebSocket? = null
-    private var retryDelayMs = 1_000L
+    private var retryDelayMs = NetConfig.WS_RETRY_DELAY_INITIAL_MS
 
     init {
         scope.launch { connect() }
@@ -38,7 +38,7 @@ class WebSocketEsp32Client(
             val request = Request.Builder().url("ws://$ip:$port/ir").build()
             webSocket = client.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(ws: WebSocket, response: Response) {
-                    retryDelayMs = 1_000L
+                    retryDelayMs = NetConfig.WS_RETRY_DELAY_INITIAL_MS
                 }
 
                 override fun onMessage(ws: WebSocket, text: String) {
@@ -60,9 +60,9 @@ class WebSocketEsp32Client(
                 }
             })
 
-            closed.await()  // wait for socket to actually close before retrying
+            closed.await()
             delay(retryDelayMs)
-            retryDelayMs = (retryDelayMs * 2).coerceAtMost(30_000L)
+            retryDelayMs = (retryDelayMs * 2).coerceAtMost(NetConfig.WS_RETRY_DELAY_MAX_MS)
         }
     }
 
