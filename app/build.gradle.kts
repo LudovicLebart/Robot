@@ -54,6 +54,7 @@ dependencies {
     implementation(project(":core-tsdf"))
     implementation(project(":core-render"))
     implementation(project(":core-net"))
+    implementation(project(":core-nav"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

@@ -7,6 +7,7 @@ import com.robot.common.SafetyState
 import com.robot.common.SessionState
 import com.robot.net.VerticalSafetyMonitor
 import com.robot.net.WebSocketEsp32Client
+import com.robot.nav.VioMapAccumulator
 import com.robot.slam.ArSessionManager
 import com.robot.tsdf.PlyExporter
 import com.robot.tsdf.TsdfVolume
@@ -26,6 +27,8 @@ class SlamViewModel @Inject constructor(
     private val esp32Client: WebSocketEsp32Client,
     private val safetyMonitor: VerticalSafetyMonitor,
 ) : AndroidViewModel(application) {
+
+    val vioAccumulator = VioMapAccumulator()
 
     val sessionState: StateFlow<SessionState> = sessionManager.state
 
